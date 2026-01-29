@@ -18,23 +18,24 @@ pip install -r requirements.txt
 
 ## How to run
 
-From the project root, set `PYTHONPATH` to `src` and run the main module:
+From the project root, run the launcher (no `PYTHONPATH` needed):
+
+```bash
+python run.py
+```
+
+A **launcher** splash opens first (cross-platform): it shows `cow.jpg` from `resources/cow.jpg` or your Desktop. If dependencies are missing, it shows "Installing dependencies..." on the image and runs `pip install -r requirements.txt`, then starts the app. Put `cow.jpg` in the project `resources/` folder or on your Desktop.
+
+On **Windows**, `run.py` detects when it is started with `python.exe` (console) and re-launches itself with `pythonw.exe`, so no console window appears and closing a terminal does not close the app. You can also run `pythonw run.py` directly.
+
+Alternative (with `PYTHONPATH`):
 
 ```bash
 # Windows (PowerShell)
 $env:PYTHONPATH = "src"; python -m main
 
-# Windows (cmd)
-set PYTHONPATH=src && python -m main
-
 # Linux / macOS
 PYTHONPATH=src python -m main
-```
-
-Or run the script directly:
-
-```bash
-PYTHONPATH=src python src/main.py
 ```
 
 ## Usage
@@ -49,8 +50,11 @@ PYTHONPATH=src python src/main.py
 
 ```
 EpubConverter/
+├── run.py                         # Start here: python run.py
+├── resources/                     # Put cow.jpg here (or on Desktop) for launcher splash
 ├── src/
 │   ├── __init__.py
+│   ├── launcher.py                # Splash with cow.jpg; installs deps if needed
 │   ├── main.py                    # Entry point; starts the application
 │   │
 │   ├── app/                       # Application core

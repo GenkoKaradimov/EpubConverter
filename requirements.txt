@@ -1,3 +1,6 @@
+# Launcher splash image (JPEG)
+Pillow>=10.0.0
+
 # PDF extraction (pip package name is PyMuPDF; import as fitz or pymupdf)
 PyMuPDF>=1.24.0
 
