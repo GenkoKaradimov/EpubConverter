@@ -57,10 +57,21 @@ class Application:
         self._current_document = doc
         return out_path
 
+    def load_epub(self, epub_path: Path | str) -> Document:
+        """
+        Load an EPUB file into the current document. Sets current_document and returns it.
+        Raises FileNotFoundError, RuntimeError on failure.
+        """
+        from core.converters.epub_extractor import EpubExtractor
+
+        doc = EpubExtractor().extract(epub_path)
+        self._current_document = doc
+        return doc
+
     def build_epub(self, epub_path: Path | str) -> None:
         """Build current_document to EPUB file. Raises ValueError if empty/no document; RuntimeError/OSError on write failure."""
         if self._current_document is None:
-            raise ValueError("No document loaded. Extract a PDF first.")
+            raise ValueError("No document loaded. Open a PDF or EPUB, or extract from PDF.")
         doc = self._current_document
         if not doc.flat_list():
             raise ValueError("Document has no content. Add chapters or paragraphs before export.")
