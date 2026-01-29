@@ -1,0 +1,10 @@
+# PDF extraction
+pymupdf>=1.24.0
+
+# Alternative (pure-Python): pdfplumber>=0.11.0
+
+# EPUB building
+ebooklib>=0.18
+
+# Configuration (optional .env support)
+python-dotenv>=1.0.0
