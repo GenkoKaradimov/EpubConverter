@@ -36,6 +36,10 @@ class Application:
         """Current document after extraction or pipeline run; None until then."""
         return self._current_document
 
+    def set_current_document(self, document: Document | None) -> None:
+        """Set the current document (e.g. after extraction)."""
+        self._current_document = document
+
     def run_pipeline(self, pdf_path: Path | str, epub_path: Path | str | None = None) -> Path:
         """
         Run PDF -> extract -> build EPUB. Sets current_document. Returns path to created EPUB.
@@ -47,18 +51,25 @@ class Application:
         self._current_document = doc
         return out_path
 
+    def build_epub(self, epub_path: Path | str) -> None:
+        """Build current_document to EPUB file. Raises on failure."""
+        if self._current_document is None:
+            raise ValueError("No document loaded")
+        from core.converters.epub_builder import EpubBuilder
+
+        EpubBuilder().build(self._current_document, epub_path)
+
     def run(self) -> None:
-        """Start the GUI (main loop). Blocks until window is closed."""
+        """Start the GUI (main loop). Shows MainWindow with conversion view. Blocks until window is closed."""
         try:
             import tkinter as tk
         except ImportError:
             return
         self._root = tk.Tk()
-        self._root.title("EpubConverter")
-        self._root.geometry("400x200")
-        label = tk.Label(self._root, text="EpubConverter\n(GUI in Phase 5)", font=("", 12))
-        label.pack(expand=True)
-        self._root.protocol("WM_DELETE_WINDOW", self.stop)
+        from gui.main_window import MainWindow
+
+        self._main_window = MainWindow(self._root, self)
+        self._main_window.show_conversion_view()
         self._root.mainloop()
 
     def stop(self) -> None:
