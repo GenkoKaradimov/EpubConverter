@@ -74,11 +74,15 @@ class MainWindow:
         """Show the editor view with the loaded document."""
         self._clear_container()
         from gui.views.editor_view import EditorView
+        from gui.presenters import EditorPresenter
 
         self._current_view_frame = Frame(self._container)
         self._current_view_frame.pack(fill="both", expand=True)
         view = EditorView(self._current_view_frame, document)
         view.pack(fill="both", expand=True)
+        presenter = EditorPresenter(view, document)
+        view.set_presenter(presenter)
+        presenter.on_show()
 
     def _on_open_pdf(self) -> None:
         path = filedialog.askopenfilename(
