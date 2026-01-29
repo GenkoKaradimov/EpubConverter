@@ -1,0 +1,13 @@
+# Launcher splash image (JPEG)
+Pillow>=10.0.0
+
+# PDF extraction (pip package name is PyMuPDF; import as fitz or pymupdf)
+PyMuPDF>=1.24.0
+
+# Alternative (pure-Python): pdfplumber>=0.11.0
+
+# EPUB building
+ebooklib>=0.18
+
+# Configuration (optional .env support)
+python-dotenv>=1.0.0
