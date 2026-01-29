@@ -41,6 +41,7 @@ class MainWindow:
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Open PDF...", command=self._on_open_pdf)
         file_menu.add_command(label="Export EPUB...", command=self._on_export_epub)
+        file_menu.add_command(label="Preview EPUB", command=self._on_preview_epub)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
@@ -80,7 +81,7 @@ class MainWindow:
         self._current_view_frame.pack(fill="both", expand=True)
         view = EditorView(self._current_view_frame, document)
         view.pack(fill="both", expand=True)
-        presenter = EditorPresenter(view, document)
+        presenter = EditorPresenter(view, document, self)
         view.set_presenter(presenter)
         presenter.on_show()
 
@@ -92,7 +93,8 @@ class MainWindow:
         if path:
             self.show_conversion_view(initial_path=path)
 
-    def _on_export_epub(self) -> None:
+    def request_export_epub(self) -> None:
+        """Show save dialog and build EPUB from current document. Clear success/error messages."""
         if not self._app.current_document:
             messagebox.showinfo("Export EPUB", "No document loaded. Extract a PDF first.")
             return
@@ -101,12 +103,34 @@ class MainWindow:
             defaultextension=".epub",
             filetypes=[("EPUB files", "*.epub"), ("All files", "*.*")],
         )
-        if path:
-            try:
-                self._app.build_epub(path)
-                messagebox.showinfo("Export EPUB", f"Saved to:\n{path}")
-            except Exception as e:
-                messagebox.showerror("Export EPUB", f"Failed to save EPUB:\n{e}")
+        if not path:
+            return
+        try:
+            self._app.build_epub(path)
+            messagebox.showinfo("Export EPUB", f"Saved to:\n{path}")
+        except ValueError as e:
+            messagebox.showwarning("Export EPUB", str(e))
+        except (OSError, RuntimeError) as e:
+            messagebox.showerror("Export EPUB", f"Failed to save EPUB:\n{e}")
+        except Exception as e:
+            messagebox.showerror("Export EPUB", f"Unexpected error:\n{e}")
+
+    def _on_export_epub(self) -> None:
+        self.request_export_epub()
+
+    def _on_preview_epub(self) -> None:
+        path = self._app.last_export_path
+        if not path or not path.exists():
+            messagebox.showinfo("Preview EPUB", "No EPUB exported yet. Export from File → Export EPUB first.")
+            return
+        try:
+            from gui.views.preview_view import open_path_in_default_app
+            if open_path_in_default_app(path):
+                messagebox.showinfo("Preview EPUB", f"Opening:\n{path}")
+            else:
+                messagebox.showerror("Preview EPUB", f"File not found or could not open:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Preview EPUB", f"Failed to open:\n{e}")
 
     def _on_about(self) -> None:
         messagebox.showinfo(

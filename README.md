@@ -2,6 +2,49 @@
 
 Convert PDF to EPUB with user editing support. The GUI is built with **Tkinter**.
 
+## Requirements
+
+- Python 3.10+
+- **PyMuPDF** (pip package name: `PyMuPDF`) – PDF extraction
+- **ebooklib** – EPUB building
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+(If `pymupdf` fails to install, try `pip install PyMuPDF` with capital letters.)
+
+## How to run
+
+From the project root, set `PYTHONPATH` to `src` and run the main module:
+
+```bash
+# Windows (PowerShell)
+$env:PYTHONPATH = "src"; python -m main
+
+# Windows (cmd)
+set PYTHONPATH=src && python -m main
+
+# Linux / macOS
+PYTHONPATH=src python -m main
+```
+
+Or run the script directly:
+
+```bash
+PYTHONPATH=src python src/main.py
+```
+
+## Usage
+
+1. **Open PDF** – File → Open PDF… (or start by selecting a PDF).
+2. **Extract** – Click “Extract” to parse the PDF into chapters and paragraphs. The editor opens with the extracted document.
+3. **Edit** – Change text, add/remove/move chapters and paragraphs. Use “Apply” to save the current block to the document.
+4. **Export EPUB** – File → Export EPUB… or click “Export to EPUB” in the editor. Choose a save location; the current document is written as a valid EPUB.
+5. **Preview EPUB** – File → Preview EPUB opens the last exported EPUB in the system default reader (if available).
+
 ## Project structure
 
 ```

@@ -30,11 +30,17 @@ class Application:
                 pass  # e.g. sandbox or read-only home
         self._root = None
         self._current_document: Document | None = None
+        self._last_export_path: Path | None = None
 
     @property
     def current_document(self) -> Document | None:
         """Current document after extraction or pipeline run; None until then."""
         return self._current_document
+
+    @property
+    def last_export_path(self) -> Path | None:
+        """Path of the last successfully exported EPUB file; None until first export."""
+        return self._last_export_path
 
     def set_current_document(self, document: Document | None) -> None:
         """Set the current document (e.g. after extraction)."""
@@ -52,12 +58,16 @@ class Application:
         return out_path
 
     def build_epub(self, epub_path: Path | str) -> None:
-        """Build current_document to EPUB file. Raises on failure."""
+        """Build current_document to EPUB file. Raises ValueError if empty/no document; RuntimeError/OSError on write failure."""
         if self._current_document is None:
-            raise ValueError("No document loaded")
+            raise ValueError("No document loaded. Extract a PDF first.")
+        doc = self._current_document
+        if not doc.flat_list():
+            raise ValueError("Document has no content. Add chapters or paragraphs before export.")
         from core.converters.epub_builder import EpubBuilder
 
-        EpubBuilder().build(self._current_document, epub_path)
+        EpubBuilder().build(doc, Path(epub_path))
+        self._last_export_path = Path(epub_path)
 
     def run(self) -> None:
         """Start the GUI (main loop). Shows MainWindow with conversion view. Blocks until window is closed."""

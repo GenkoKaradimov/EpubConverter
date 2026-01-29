@@ -5,6 +5,7 @@ All code and comments in English.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,11 +34,13 @@ def _next_chapter_id(document: Document) -> str:
 class EditorPresenter:
     """
     Editor presenter: wire view and Document. Read on show, write on Apply or selection change.
+    Export to EPUB via main_window.request_export_epub().
     """
 
-    def __init__(self, view: EditorView, document: Document) -> None:
+    def __init__(self, view: EditorView, document: Document, main_window: "MainWindow") -> None:
         self._view = view
         self._document = document
+        self._main_window = main_window
         self._current_index: int | None = None
 
     def on_show(self) -> None:
@@ -78,6 +81,11 @@ class EditorPresenter:
     def on_apply(self) -> None:
         """Save current text to selected node."""
         self._save_current_to_node()
+
+    def on_export_epub(self) -> None:
+        """Trigger Export EPUB (file dialog and build) via main window."""
+        self._save_current_to_node()
+        self._main_window.request_export_epub()
 
     def on_add_chapter(self) -> None:
         """Add a new chapter node to document and refresh list."""
@@ -161,18 +169,28 @@ class ConversionPresenter:
         if not path_obj.exists():
             self._view.set_status(f"File not found: {path}")
             return
-        self._view.set_status("Extracting...")
+        self._view.set_status("Extracting... (please wait)")
         self._view.update_idletasks()
-        try:
-            from core.converters.pdf_extractor import PdfExtractor
+        root = getattr(self._main_window, "_root", None)
+        if not root:
+            self._view.set_status("UI not ready.")
+            return
 
-            document = PdfExtractor().extract(path_obj)
-            self._app.set_current_document(document)
-            self._view.set_status("")
-            self._main_window.show_editor_view(document)
-        except FileNotFoundError as e:
-            self._view.set_status(f"File not found: {e}")
-        except RuntimeError as e:
-            self._view.set_status(f"Extraction failed (install PyMuPDF?): {e}")
-        except Exception as e:
-            self._view.set_status(f"Extraction failed: {e}")
+        def do_extract() -> None:
+            try:
+                from core.converters.pdf_extractor import PdfExtractor
+
+                document = PdfExtractor().extract(path_obj)
+                def on_success() -> None:
+                    self._app.set_current_document(document)
+                    self._view.set_status("")
+                    self._main_window.show_editor_view(document)
+                root.after(0, on_success)
+            except FileNotFoundError as e:
+                root.after(0, lambda: self._view.set_status(f"File not found: {e}"))
+            except RuntimeError as e:
+                root.after(0, lambda: self._view.set_status(f"Extraction failed (install PyMuPDF?): {e}"))
+            except Exception as e:
+                root.after(0, lambda err=e: self._view.set_status(f"Extraction failed: {err}"))
+
+        threading.Thread(target=do_extract, daemon=True).start()

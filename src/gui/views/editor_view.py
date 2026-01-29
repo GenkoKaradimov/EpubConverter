@@ -84,6 +84,8 @@ class EditorView(Frame):
         self._btn_down.pack(side=LEFT, padx=(0, 4))
         self._btn_apply = Button(btn_frame, text="Apply", command=self._on_apply)
         self._btn_apply.pack(side=LEFT, padx=(0, 4))
+        self._btn_export = Button(btn_frame, text="Export to EPUB", command=self._on_export_epub)
+        self._btn_export.pack(side=LEFT, padx=(0, 4))
 
         # Search (optional)
         search_frame = Frame(self)
@@ -125,6 +127,10 @@ class EditorView(Frame):
     def _on_apply(self) -> None:
         if self._presenter:
             self._presenter.on_apply()
+
+    def _on_export_epub(self) -> None:
+        if self._presenter:
+            self._presenter.on_export_epub()
 
     def _on_find_next(self) -> None:
         if self._presenter:
