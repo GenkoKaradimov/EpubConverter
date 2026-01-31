@@ -6,7 +6,7 @@ Add chapter / Remove / Move up-down; image Rotate and Crop. All code and comment
 from __future__ import annotations
 
 from pathlib import Path
-from tkinter import Frame, Label, Listbox, Text, Button, Scrollbar, StringVar, Entry, Spinbox, Scale, Canvas, BOTH, END, LEFT, RIGHT, TOP, BOTTOM, X, Y, W, N, S, E, Toplevel, HORIZONTAL
+from tkinter import Frame, Label, Listbox, Text, Button, Scrollbar, StringVar, Entry, Spinbox, Scale, Canvas, Menu, BOTH, END, LEFT, RIGHT, TOP, BOTTOM, X, Y, W, N, S, E, Toplevel, HORIZONTAL
 from typing import TYPE_CHECKING
 
 from core.models.document import ContentItem, ContentNode, Document, ImageNode
@@ -60,6 +60,7 @@ class EditorView(Frame):
         self._listbox.pack(side=LEFT, fill=BOTH, expand=True)
         list_scroll.config(command=self._listbox.yview)
         self._listbox.bind("<<ListboxSelect>>", self._on_list_select)
+        self._listbox.bind("<Button-3>", self._on_list_right_click)
 
         # Right: text or image panel (switch by selection)
         self._right_panel = Frame(content)
@@ -356,6 +357,65 @@ class EditorView(Frame):
         sel = self._listbox.curselection()
         if sel and self._presenter:
             self._presenter.on_selection(sel[0])
+
+    def _on_list_right_click(self, event: object) -> None:
+        """Show context menu for the item under the cursor; select it first."""
+        index = self._listbox.nearest(event.y)
+        if index < 0 or index >= self._listbox.size():
+            return
+        self._listbox.selection_clear(0, END)
+        self._listbox.selection_set(index)
+        self._listbox.see(index)
+        if self._presenter:
+            self._presenter.on_selection(index)
+        menu = Menu(self, tearoff=0)
+        menu.add_command(label="Delete", command=self._on_context_delete)
+        menu.add_command(label="Move up", command=self._on_context_move_up)
+        menu.add_command(label="Move down", command=self._on_context_move_down)
+        menu.add_command(label="Duplicate", command=self._on_context_duplicate)
+        menu.add_separator()
+        add_below_menu = Menu(menu, tearoff=0)
+        add_below_menu.add_command(label="Title (chapter)", command=self._on_context_add_below_title)
+        add_below_menu.add_command(label="Paragraph", command=self._on_context_add_below_paragraph)
+        add_below_menu.add_command(label="Image...", command=self._on_context_add_below_image)
+        add_below_menu.add_command(label="Image from clipboard", command=self._on_context_add_below_image_from_clipboard)
+        menu.add_cascade(label="Add below", menu=add_below_menu)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _on_context_delete(self) -> None:
+        if self._presenter:
+            self._presenter.on_remove()
+
+    def _on_context_move_up(self) -> None:
+        if self._presenter:
+            self._presenter.on_move_up()
+
+    def _on_context_move_down(self) -> None:
+        if self._presenter:
+            self._presenter.on_move_down()
+
+    def _on_context_duplicate(self) -> None:
+        if self._presenter:
+            self._presenter.on_duplicate()
+
+    def _on_context_add_below_title(self) -> None:
+        if self._presenter:
+            self._presenter.on_add_below_title()
+
+    def _on_context_add_below_paragraph(self) -> None:
+        if self._presenter:
+            self._presenter.on_add_below_paragraph()
+
+    def _on_context_add_below_image(self) -> None:
+        if self._presenter:
+            self._presenter.on_add_below_image()
+
+    def _on_context_add_below_image_from_clipboard(self) -> None:
+        if self._presenter:
+            self._presenter.on_add_below_image_from_clipboard()
 
     def _on_text_modified(self, event: object) -> None:
         if self._text.cget("state") == "normal":

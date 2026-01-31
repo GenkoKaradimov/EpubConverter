@@ -5,8 +5,10 @@ All code and comments in English.
 
 from __future__ import annotations
 
+import tempfile
 import threading
 from pathlib import Path
+from tkinter import filedialog, messagebox
 from typing import TYPE_CHECKING
 
 from core.models.document import ContentItem, ContentNode, Document, ImageNode
@@ -29,6 +31,32 @@ def _next_chapter_id(document: Document) -> str:
             except ValueError:
                 pass
     return f"ch_{max_n + 1}"
+
+
+def _next_paragraph_id(document: Document) -> str:
+    """Return a unique id for a new paragraph (p_N)."""
+    max_n = -1
+    for node in document.root_nodes:
+        if isinstance(node, ContentNode) and node.id.startswith("p_"):
+            try:
+                n = int(node.id[2:])
+                max_n = max(max_n, n)
+            except ValueError:
+                pass
+    return f"p_{max_n + 1}"
+
+
+def _next_image_id(document: Document) -> str:
+    """Return a unique image_id for document.images (img_N)."""
+    max_n = -1
+    for key in document.images:
+        if key.startswith("img_"):
+            try:
+                n = int(key[4:])
+                max_n = max(max_n, n)
+            except ValueError:
+                pass
+    return f"img_{max_n + 1}"
 
 
 def _item_text(item: ContentItem) -> str:
@@ -178,6 +206,136 @@ class EditorPresenter:
         self._view.set_nodes(self._document.flat_list())
         self._view.set_selection(idx + 1)
         self._current_index = idx + 1
+
+    def on_duplicate(self) -> None:
+        """Duplicate the selected node and insert it right below; select the new node."""
+        idx = self._view.get_selected_index()
+        if idx is None:
+            return
+        nodes = self._document.root_nodes
+        if idx < 0 or idx >= len(nodes):
+            return
+        node = nodes[idx]
+        if isinstance(node, ContentNode):
+            new_id = _next_chapter_id(self._document) if node.level >= 1 else _next_paragraph_id(self._document)
+            clone = ContentNode(id=new_id, text=node.text, level=node.level)
+        else:
+            assert isinstance(node, ImageNode)
+            clone = ImageNode(
+                id=f"{node.id}_copy",
+                image_id=node.image_id,
+                alt=node.alt,
+                rotation_degrees=node.rotation_degrees,
+                crop_rect=node.crop_rect,
+            )
+        nodes.insert(idx + 1, clone)
+        self._view.set_nodes(self._document.flat_list())
+        self._view.set_selection(idx + 1)
+        self._current_index = idx + 1
+        self._show_node(idx + 1)
+
+    def on_add_below_title(self) -> None:
+        """Insert a new chapter (title) below the selected item."""
+        idx = self._view.get_selected_index()
+        if idx is None:
+            idx = -1
+        new_id = _next_chapter_id(self._document)
+        node = ContentNode(id=new_id, text="New Chapter", level=1)
+        self._document.root_nodes.insert(idx + 1, node)
+        self._view.set_nodes(self._document.flat_list())
+        self._view.set_selection(idx + 1)
+        self._current_index = idx + 1
+        self._show_node(idx + 1)
+        self._view.set_buttons_state(True)
+        self._view.set_text(node.text)
+        self._view.focus_text()
+
+    def on_add_below_paragraph(self) -> None:
+        """Insert a new paragraph below the selected item."""
+        idx = self._view.get_selected_index()
+        if idx is None:
+            idx = -1
+        new_id = _next_paragraph_id(self._document)
+        node = ContentNode(id=new_id, text="", level=0)
+        self._document.root_nodes.insert(idx + 1, node)
+        self._view.set_nodes(self._document.flat_list())
+        self._view.set_selection(idx + 1)
+        self._current_index = idx + 1
+        self._show_node(idx + 1)
+        self._view.set_buttons_state(True)
+        self._view.set_text("")
+        self._view.focus_text()
+
+    def on_add_below_image(self) -> None:
+        """Ask for an image file, then insert a new image node below the selected item."""
+        root = getattr(self._main_window, "_root", None)
+        if not root:
+            return
+        path_str = filedialog.askopenfilename(
+            parent=root,
+            title="Select image",
+            filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.gif *.webp"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path_str:
+            return
+        path = Path(path_str)
+        if not path.exists():
+            return
+        idx = self._view.get_selected_index()
+        if idx is None:
+            idx = -1
+        image_id = _next_image_id(self._document)
+        self._document.images[image_id] = path
+        node_id = f"img_node_{image_id}"
+        node = ImageNode(id=node_id, image_id=image_id, alt=None)
+        self._document.root_nodes.insert(idx + 1, node)
+        self._view.set_nodes(self._document.flat_list())
+        self._view.set_selection(idx + 1)
+        self._current_index = idx + 1
+        self._show_node(idx + 1)
+        self._view.set_buttons_state(True)
+
+    def on_add_below_image_from_clipboard(self) -> None:
+        """Get image from clipboard, save to file, then insert new image node below the selected item."""
+        try:
+            from PIL import ImageGrab
+        except ImportError:
+            root = getattr(self._main_window, "_root", None)
+            if root:
+                messagebox.showinfo("Clipboard", "Pillow is required for clipboard images.", parent=root)
+            return
+        img = ImageGrab.grabclipboard()
+        if img is None:
+            root = getattr(self._main_window, "_root", None)
+            if root:
+                messagebox.showinfo("Clipboard", "No image in clipboard.", parent=root)
+            return
+        idx = self._view.get_selected_index()
+        if idx is None:
+            idx = -1
+        image_id = _next_image_id(self._document)
+        clip_dir = Path(tempfile.gettempdir()) / "EpubConverter" / "clipboard"
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        path = clip_dir / f"{image_id}.png"
+        try:
+            img.save(str(path), "PNG")
+        except OSError:
+            root = getattr(self._main_window, "_root", None)
+            if root:
+                messagebox.showerror("Clipboard", "Failed to save clipboard image.", parent=root)
+            return
+        self._document.images[image_id] = path
+        node_id = f"img_node_{image_id}"
+        node = ImageNode(id=node_id, image_id=image_id, alt=None)
+        self._document.root_nodes.insert(idx + 1, node)
+        self._view.set_nodes(self._document.flat_list())
+        self._view.set_selection(idx + 1)
+        self._current_index = idx + 1
+        self._show_node(idx + 1)
+        self._view.set_buttons_state(True)
 
     def on_rotate(self, degrees: float) -> None:
         """Set rotation on current ImageNode and refresh preview."""
