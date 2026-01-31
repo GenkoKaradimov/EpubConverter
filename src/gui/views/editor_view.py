@@ -6,7 +6,7 @@ Add chapter / Remove / Move up-down; image Rotate and Crop. All code and comment
 from __future__ import annotations
 
 from pathlib import Path
-from tkinter import Frame, Label, Listbox, Text, Button, Scrollbar, StringVar, Entry, Spinbox, Scale, Canvas, Menu, BOTH, END, LEFT, RIGHT, TOP, BOTTOM, X, Y, W, N, S, E, Toplevel, HORIZONTAL
+from tkinter import Frame, Label, Listbox, Text, Button, Scrollbar, StringVar, Entry, Spinbox, Scale, Canvas, Menu, PanedWindow, BOTH, END, LEFT, RIGHT, TOP, BOTTOM, X, Y, W, N, S, E, Toplevel, HORIZONTAL
 from typing import TYPE_CHECKING
 
 from core.models.document import ContentItem, ContentNode, Document, ImageNode
@@ -46,25 +46,27 @@ class EditorView(Frame):
         meta = self._document.metadata
         Label(self, text=f"Document: {meta.title}", font=("", 10)).pack(anchor=W, pady=(0, 8))
 
-        # Two columns: list left, text right
+        # Two columns: list left, content right — resizable splitter
         content = Frame(self)
         content.pack(fill=BOTH, expand=True, pady=(0, 4))
+        paned = PanedWindow(content, orient=HORIZONTAL, sashrelief="raised", sashwidth=8, bg="gray75")
+        paned.pack(fill=BOTH, expand=True)
 
         # Left: list of nodes
-        list_frame = Frame(content)
-        list_frame.pack(side=LEFT, fill=BOTH, expand=False, padx=(0, 8))
+        list_frame = Frame(paned)
         Label(list_frame, text="Chapters / paragraphs:").pack(anchor=W)
         list_scroll = Scrollbar(list_frame)
         list_scroll.pack(side=RIGHT, fill=Y)
-        self._listbox = Listbox(list_frame, height=15, width=45, yscrollcommand=list_scroll.set, selectmode="single")
+        self._listbox = Listbox(list_frame, height=15, width=35, yscrollcommand=list_scroll.set, selectmode="single")
         self._listbox.pack(side=LEFT, fill=BOTH, expand=True)
         list_scroll.config(command=self._listbox.yview)
         self._listbox.bind("<<ListboxSelect>>", self._on_list_select)
         self._listbox.bind("<Button-3>", self._on_list_right_click)
+        paned.add(list_frame, minsize=120, width=280)
 
         # Right: text or image panel (switch by selection)
-        self._right_panel = Frame(content)
-        self._right_panel.pack(side=LEFT, fill=BOTH, expand=True)
+        self._right_panel = Frame(paned)
+        paned.add(self._right_panel, minsize=200)
 
         # Text panel (ContentNode)
         text_frame = Frame(self._right_panel)
