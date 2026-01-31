@@ -7,7 +7,7 @@ import pytest
 
 from core.converters.epub_builder import EpubBuilder
 from core.converters.epub_extractor import EpubExtractor
-from core.models import BookMetadata, ContentNode, Document
+from core.models import BookMetadata, ContentNode, Document, ImageNode
 
 
 def _make_sample_document() -> Document:
@@ -40,7 +40,7 @@ def test_epub_extractor_extracts_metadata_and_content() -> None:
         assert "Test Author" in extracted.metadata.authors
         flat = extracted.flat_list()
         assert len(flat) >= 5
-        texts = [n.text for n in flat]
+        texts = [n.text for n in flat if isinstance(n, ContentNode)]
         assert "Chapter One" in texts
         assert "First paragraph." in texts
         assert "Second paragraph." in texts

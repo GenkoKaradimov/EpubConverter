@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.models.document import ContentNode, Document
+from core.models.document import ContentItem, ContentNode, Document, ImageNode
 from gui.views.conversion_view import ConversionView
 from gui.views.editor_view import EditorView
 
@@ -22,13 +22,20 @@ def _next_chapter_id(document: Document) -> str:
     """Return a unique id for a new chapter (ch_N)."""
     max_n = -1
     for node in document.root_nodes:
-        if node.id.startswith("ch_"):
+        if isinstance(node, ContentNode) and node.id.startswith("ch_"):
             try:
                 n = int(node.id[3:])
                 max_n = max(max_n, n)
             except ValueError:
                 pass
     return f"ch_{max_n + 1}"
+
+
+def _item_text(item: ContentItem) -> str:
+    """Text or alt for display in the content area."""
+    if isinstance(item, ImageNode):
+        return item.alt or ""
+    return item.text
 
 
 class EditorPresenter:
@@ -43,39 +50,65 @@ class EditorPresenter:
         self._main_window = main_window
         self._current_index: int | None = None
 
+    def _show_node(self, index: int) -> None:
+        """Show text or image panel for node at index."""
+        nodes = self._document.flat_list()
+        if index < 0 or index >= len(nodes):
+            self._view.show_text_panel()
+            self._view.set_text("")
+            return
+        node = nodes[index]
+        if isinstance(node, ImageNode):
+            path = self._document.images.get(node.image_id)
+            if path and path.exists():
+                self._view.show_image_panel(path, node)
+            else:
+                self._view.show_text_panel()
+                self._view.set_text(_item_text(node))
+        else:
+            self._view.show_text_panel()
+            self._view.set_text(_item_text(node))
+
     def on_show(self) -> None:
         """Populate list from document and select first node if any."""
         nodes = self._document.flat_list()
         self._view.set_nodes(nodes)
         if nodes:
             self._view.set_selection(0)
-            self._view.set_text(nodes[0].text)
+            self._show_node(0)
             self._view.set_buttons_state(True)
             self._current_index = 0
         else:
+            self._view.show_text_panel()
             self._view.set_text("")
             self._view.set_buttons_state(False)
             self._current_index = None
 
     def _save_current_to_node(self) -> None:
-        """Write view text to the currently selected node in document."""
+        """Write view text/alt to the currently selected node in document."""
         if self._current_index is None:
             return
         nodes = self._document.flat_list()
         if 0 <= self._current_index < len(nodes):
-            nodes[self._current_index].text = self._view.get_text()
+            node = nodes[self._current_index]
+            text = self._view.get_text()
+            if isinstance(node, ImageNode):
+                node.alt = text or None
+            else:
+                node.text = text
         self._view.clear_text_modified()
 
     def on_selection(self, index: int) -> None:
-        """Save current text to previous node, then load selected node."""
+        """Save current text/alt to previous node, then load selected node (text or image panel)."""
         self._save_current_to_node()
         nodes = self._document.flat_list()
         if 0 <= index < len(nodes):
             self._current_index = index
-            self._view.set_text(nodes[index].text)
+            self._show_node(index)
             self._view.set_buttons_state(True)
         else:
             self._current_index = None
+            self._view.show_text_panel()
             self._view.set_buttons_state(False)
 
     def on_apply(self) -> None:
@@ -95,10 +128,11 @@ class EditorPresenter:
         nodes = self._document.flat_list()
         self._view.set_nodes(nodes)
         idx = len(nodes) - 1
+        self._current_index = idx
         self._view.set_selection(idx)
+        self._view.show_text_panel()
         self._view.set_text(node.text)
         self._view.set_buttons_state(True)
-        self._current_index = idx
         self._view.focus_text()
 
     def on_remove(self) -> None:
@@ -116,9 +150,10 @@ class EditorPresenter:
             if nodes:
                 new_idx = min(idx, len(nodes) - 1)
                 self._view.set_selection(new_idx)
-                self._view.set_text(nodes[new_idx].text)
+                self._show_node(new_idx)
                 self._current_index = new_idx
             else:
+                self._view.show_text_panel()
                 self._view.set_text("")
                 self._view.set_buttons_state(False)
 
@@ -143,6 +178,42 @@ class EditorPresenter:
         self._view.set_nodes(self._document.flat_list())
         self._view.set_selection(idx + 1)
         self._current_index = idx + 1
+
+    def on_rotate(self, degrees: float) -> None:
+        """Set rotation on current ImageNode and refresh preview."""
+        if self._current_index is None:
+            return
+        nodes = self._document.flat_list()
+        if 0 <= self._current_index < len(nodes):
+            node = nodes[self._current_index]
+            if isinstance(node, ImageNode):
+                node.rotation_degrees = degrees
+                path = self._document.images.get(node.image_id)
+                if path and path.exists():
+                    self._view.set_image_preview_from_node(path, node)
+
+    def on_crop(self, crop_rect: tuple[float, float, float, float]) -> None:
+        """Set crop rect on current ImageNode and refresh preview."""
+        if self._current_index is None:
+            return
+        nodes = self._document.flat_list()
+        if 0 <= self._current_index < len(nodes):
+            node = nodes[self._current_index]
+            if isinstance(node, ImageNode):
+                node.crop_rect = crop_rect
+                path = self._document.images.get(node.image_id)
+                if path and path.exists():
+                    self._view.set_image_preview_from_node(path, node)
+
+    def on_crop_dialog(self, open_dialog: "object") -> None:
+        """Open crop dialog; open_dialog(current_rect) is called by view, we pass node's crop_rect."""
+        if self._current_index is None:
+            return
+        nodes = self._document.flat_list()
+        if 0 <= self._current_index < len(nodes):
+            node = nodes[self._current_index]
+            if isinstance(node, ImageNode):
+                open_dialog(node.crop_rect)
 
     def on_find_next(self) -> None:
         """Find next occurrence of search string in text area."""
@@ -180,7 +251,8 @@ class ConversionPresenter:
             try:
                 from core.converters.pdf_extractor import PdfExtractor
 
-                document = PdfExtractor().extract(path_obj)
+                images_dir = path_obj.parent / (path_obj.stem + "_images")
+                document = PdfExtractor().extract(path_obj, images_dir=images_dir)
                 def on_success() -> None:
                     self._app.set_current_document(document)
                     self._view.set_status("")

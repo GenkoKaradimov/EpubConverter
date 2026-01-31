@@ -1,17 +1,19 @@
 """
 Extract Document from EPUB using ebooklib: metadata, spine-ordered content, HTML parsing.
-All code and comments in English.
+All code and comments in English. Supports images when images_dir is provided.
 """
 
 from __future__ import annotations
 
 import html.parser
+import posixpath
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from core.converters.base import BaseExtractor
 from core.models.book_metadata import BookMetadata
-from core.models.document import ContentNode, Document
+from core.models.document import ContentItem, ContentNode, Document, ImageNode
 
 try:
     import ebooklib
@@ -24,6 +26,9 @@ try:
     from app.config import DEFAULT_LANGUAGE
 except ImportError:
     DEFAULT_LANGUAGE = "en"
+
+# Parsed block: (level, text) for text, or ("img", href, alt) for image
+_HtmlBlock = tuple[int, str] | tuple[str, str, str | None]
 
 
 def _first_metadata(book: Any, namespace: str, key: str) -> str | None:
@@ -76,18 +81,18 @@ def _epub_metadata_to_book_metadata(book: Any) -> BookMetadata:
 
 
 class _HtmlContentParser(html.parser.HTMLParser):
-    """Collect (level, text) for h1/h2/h3/p tags. level: 1=h1, 2=h2, 3=h3, 0=paragraph."""
+    """Collect (level, text) for h1/h2/h3/p and ("img", src, alt) for img tags."""
 
     BLOCK_TAGS = {"h1", "h2", "h3", "p", "div", "section"}
 
     def __init__(self) -> None:
         super().__init__()
-        self._blocks: list[tuple[int, str]] = []
+        self._blocks: list[_HtmlBlock] = []
         self._current_level: int | None = None
         self._current_text: list[str] = []
 
     @property
-    def blocks(self) -> list[tuple[int, str]]:
+    def blocks(self) -> list[_HtmlBlock]:
         return self._blocks
 
     def _flush(self) -> None:
@@ -98,8 +103,19 @@ class _HtmlContentParser(html.parser.HTMLParser):
         self._current_level = None
         self._current_text = []
 
+    def _attr_dict(self, attrs: list[tuple[str, str | None]]) -> dict[str, str]:
+        return {k.lower(): (v or "").strip() for k, v in attrs if v is not None}
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
+        if tag == "img":
+            self._flush()
+            ad = self._attr_dict(attrs)
+            src = ad.get("src", "").strip()
+            alt = ad.get("alt", "").strip() or None
+            if src:
+                self._blocks.append(("img", src, alt))
+            return
         if tag == "h1":
             self._flush()
             self._current_level = 1
@@ -130,8 +146,8 @@ class _HtmlContentParser(html.parser.HTMLParser):
             self._current_text.append(data)
 
 
-def _html_to_nodes(html_bytes: bytes) -> list[ContentNode]:
-    """Parse HTML body and return flat list of ContentNode (h1/h2/h3/p → level, text)."""
+def _html_to_blocks(html_bytes: bytes) -> list[_HtmlBlock]:
+    """Parse HTML body and return flat list of (level, text) or ('img', href, alt)."""
     try:
         html_str = html_bytes.decode("utf-8", errors="replace")
     except Exception:
@@ -141,33 +157,46 @@ def _html_to_nodes(html_bytes: bytes) -> list[ContentNode]:
         parser.feed(html_str)
     except Exception:
         return []
-    blocks = parser.blocks
-    nodes: list[ContentNode] = []
-    ch_count = 0
-    p_count = 0
-    for level, text in blocks:
-        text_clean = text.strip()
-        if not text_clean:
+    return parser.blocks
+
+
+def _build_href_to_image_item(book: Any) -> dict[str, Any]:
+    """Build map from normalized href / basename to image item for resolving img src."""
+    if ebooklib is None:
+        return {}
+    href_to_item: dict[str, Any] = {}
+    for item in book.get_items():
+        if item.get_type() != ebooklib.ITEM_IMAGE:
             continue
-        if level >= 1:
-            nodes.append(ContentNode(id=f"ch_{ch_count}", text=text_clean, level=level))
-            ch_count += 1
-        else:
-            nodes.append(ContentNode(id=f"p_{p_count}", text=text_clean, level=0))
-            p_count += 1
-    return nodes
+        name = getattr(item, "file_name", None) or getattr(item, "fileName", "")
+        if not name:
+            continue
+        name = name.replace("\\", "/")
+        norm = posixpath.normpath(name)
+        href_to_item[norm] = item
+        base = posixpath.basename(norm)
+        if base not in href_to_item:
+            href_to_item[base] = item
+    return href_to_item
 
 
-def _extract_nodes_from_epub(book: Any) -> list[ContentNode]:
-    """Yield ContentNodes in spine order from EPUB document items."""
+def _extract_nodes_from_epub(
+    book: Any,
+    images_dir: Path | None,
+) -> tuple[list[ContentItem], dict[str, Path]]:
+    """Extract ContentNodes and ImageNodes in spine order; write images to images_dir if provided."""
     if ebooklib is None or epub is None:
-        return []
-    all_nodes: list[ContentNode] = []
-    # spine is list of (item_id, linear) e.g. [('nav', 'yes'), ('chapter_0', 'yes')]
-    spine = getattr(book, "spine", None) or []
-    seen_ids: set[str] = set()
+        return [], {}
+    all_nodes: list[ContentItem] = []
+    images: dict[str, Path] = {}
     p_global = 0
     ch_global = 0
+    img_global = 0
+    href_to_item = _build_href_to_image_item(book) if images_dir is not None else {}
+    if images_dir is not None:
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+    spine = getattr(book, "spine", None) or []
     for entry in spine:
         item_id = entry[0] if isinstance(entry, (list, tuple)) else entry
         if isinstance(item_id, tuple):
@@ -186,23 +215,73 @@ def _extract_nodes_from_epub(book: Any) -> list[ContentNode]:
             continue
         if not raw:
             continue
-        nodes = _html_to_nodes(raw)
-        for n in nodes:
-            # Ensure globally unique ids when merging from multiple chapters
-            if n.level >= 1:
-                new_id = f"ch_{ch_global}"
-                ch_global += 1
-            else:
-                new_id = f"p_{p_global}"
-                p_global += 1
-            all_nodes.append(ContentNode(id=new_id, text=n.text, level=n.level))
-    return all_nodes
+        doc_base = ""
+        fn = getattr(item, "file_name", None) or getattr(item, "fileName", "")
+        if fn:
+            doc_base = posixpath.dirname(fn.replace("\\", "/"))
+        blocks = _html_to_blocks(raw)
+        for blk in blocks:
+            if isinstance(blk[0], int):
+                level, text = blk[0], blk[1]
+                text_clean = text.strip()
+                if not text_clean:
+                    continue
+                if level >= 1:
+                    all_nodes.append(
+                        ContentNode(id=f"ch_{ch_global}", text=text_clean, level=level)
+                    )
+                    ch_global += 1
+                else:
+                    all_nodes.append(
+                        ContentNode(id=f"p_{p_global}", text=text_clean, level=0)
+                    )
+                    p_global += 1
+            elif blk[0] == "img":
+                _, href, alt = blk[0], blk[1], blk[2]
+                if not href:
+                    continue
+                resolved = posixpath.normpath(
+                    posixpath.join(doc_base, unquote(href).replace("\\", "/"))
+                )
+                img_item = href_to_item.get(resolved) or href_to_item.get(
+                    posixpath.basename(resolved)
+                )
+                if img_item is None and images_dir is not None:
+                    continue
+                if img_item is not None and images_dir is not None:
+                    try:
+                        content = img_item.get_content()
+                    except Exception:
+                        content = None
+                    if content and isinstance(content, bytes):
+                        image_id = f"img_{img_global}"
+                        img_global += 1
+                        ext = _guess_image_ext(content)
+                        file_path = images_dir / f"{image_id}{ext}"
+                        file_path.write_bytes(content)
+                        images[image_id] = file_path
+                        node_id = f"img_node_{img_global - 1}"
+                        all_nodes.append(ImageNode(id=node_id, image_id=image_id, alt=alt))
+    return all_nodes, images
+
+
+def _guess_image_ext(data: bytes) -> str:
+    """Return file extension from image magic bytes."""
+    if data.startswith(b"\x89PNG"):
+        return ".png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return ".gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return ".webp"
+    return ".png"
 
 
 class EpubExtractor(BaseExtractor):
     """Extract a Document from an EPUB file using ebooklib and spine-ordered HTML parsing."""
 
-    def extract(self, path: Path | str) -> Document:
+    def extract(self, path: Path | str, images_dir: Path | str | None = None) -> Document:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"EPUB not found: {path}")
@@ -215,5 +294,6 @@ class EpubExtractor(BaseExtractor):
         except Exception as e:
             raise RuntimeError(f"Failed to read EPUB: {e}") from e
         metadata = _epub_metadata_to_book_metadata(book)
-        root_nodes = _extract_nodes_from_epub(book)
-        return Document(metadata=metadata, root_nodes=root_nodes)
+        idir = Path(images_dir) if images_dir is not None else None
+        root_nodes, images = _extract_nodes_from_epub(book, idir)
+        return Document(metadata=metadata, root_nodes=root_nodes, images=images)

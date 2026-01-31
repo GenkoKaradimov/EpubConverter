@@ -6,5 +6,8 @@ PyMuPDF>=1.24.0
 # EPUB building
 ebooklib>=0.18
 
+# Image display and transform (GUI preview, rotate/crop at build)
+Pillow>=10.0.0
+
 # Configuration (optional .env support)
 python-dotenv>=1.0.0

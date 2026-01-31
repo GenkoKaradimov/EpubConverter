@@ -60,11 +60,13 @@ class Application:
     def load_epub(self, epub_path: Path | str) -> Document:
         """
         Load an EPUB file into the current document. Sets current_document and returns it.
-        Raises FileNotFoundError, RuntimeError on failure.
+        Images are written to a directory next to the EPUB. Raises FileNotFoundError, RuntimeError on failure.
         """
         from core.converters.epub_extractor import EpubExtractor
 
-        doc = EpubExtractor().extract(epub_path)
+        path = Path(epub_path)
+        images_dir = path.parent / (path.stem + "_images")
+        doc = EpubExtractor().extract(epub_path, images_dir=images_dir)
         self._current_document = doc
         return doc
 
