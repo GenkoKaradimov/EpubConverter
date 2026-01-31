@@ -40,6 +40,8 @@ class MainWindow:
         file_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Open PDF...", command=self._on_open_pdf)
+        file_menu.add_command(label="Open EPUB...", command=self._on_open_epub)
+        file_menu.add_command(label="Open EPUB folder...", command=self._on_open_epub_folder)
         file_menu.add_command(label="Export EPUB...", command=self._on_export_epub)
         file_menu.add_command(label="Preview EPUB", command=self._on_preview_epub)
         file_menu.add_separator()
@@ -93,10 +95,47 @@ class MainWindow:
         if path:
             self.show_conversion_view(initial_path=path)
 
+    def _on_open_epub(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Open EPUB",
+            filetypes=[("EPUB files", "*.epub"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        self._open_epub_async(path)
+
+    def _on_open_epub_folder(self) -> None:
+        path = filedialog.askdirectory(title="Open EPUB folder (unzipped)")
+        if not path:
+            return
+        self._open_epub_async(path)
+
+    def _open_epub_async(self, path: str) -> None:
+        """Load EPUB in background thread; on success show editor, on error show messagebox."""
+        import threading
+        from pathlib import Path
+
+        root = self._root
+
+        def do_load() -> None:
+            try:
+                document = self._app.load_epub(Path(path))
+                def on_success() -> None:
+                    self.show_editor_view(document)
+                root.after(0, on_success)
+            except FileNotFoundError as e:
+                root.after(0, lambda: messagebox.showerror("Open EPUB", f"File not found:\n{e}"))
+            except RuntimeError as e:
+                root.after(0, lambda: messagebox.showerror("Open EPUB", str(e)))
+            except Exception as e:
+                root.after(0, lambda err=e: messagebox.showerror("Open EPUB", f"Failed to load EPUB:\n{err}"))
+
+        threading.Thread(target=do_load, daemon=True).start()
+
     def request_export_epub(self) -> None:
         """Show save dialog and build EPUB from current document. Clear success/error messages."""
         if not self._app.current_document:
-            messagebox.showinfo("Export EPUB", "No document loaded. Extract a PDF first.")
+            messagebox.showinfo("Export EPUB", "No document loaded. Open a PDF or EPUB, or extract from PDF.")
             return
         path = filedialog.asksaveasfilename(
             title="Export EPUB",
