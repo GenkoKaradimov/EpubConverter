@@ -1,5 +1,6 @@
 """
 Extract Document from EPUB using ebooklib: metadata, spine-ordered content, HTML parsing.
+Fallback: parse container.xml + package.opf from ZIP or directory (e.g. pdf2epub / unzipped).
 All code and comments in English. Supports images when images_dir is provided.
 """
 
@@ -7,9 +8,11 @@ from __future__ import annotations
 
 import html.parser
 import posixpath
+import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
+import xml.etree.ElementTree as ET
 
 from core.converters.base import BaseExtractor
 from core.models.book_metadata import BookMetadata
@@ -278,22 +281,293 @@ def _guess_image_ext(data: bytes) -> str:
     return ".png"
 
 
+# --- Fallback extraction (ZIP or directory) for pdf2epub / non-ebooklib EPUBs ---
+
+CONTAINER_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
+OPF_NS = "http://www.idpf.org/2007/opf"
+DC_NS = "http://purl.org/dc/elements/1.1/"
+
+
+def _parse_container_rootfile(container_xml_bytes: bytes) -> str:
+    """Parse META-INF/container.xml and return first rootfile full-path (e.g. OPS/package.opf)."""
+    root = ET.fromstring(container_xml_bytes)
+    # rootfiles is in CONTAINER_NS
+    rootfiles = root.find(f".//{{{CONTAINER_NS}}}rootfiles")
+    if rootfiles is None:
+        raise ValueError("container.xml: no rootfiles")
+    rootfile = rootfiles.find(f"{{{CONTAINER_NS}}}rootfile")
+    if rootfile is None:
+        raise ValueError("container.xml: no rootfile")
+    full_path = rootfile.get("full-path")
+    if not full_path or not full_path.strip():
+        raise ValueError("container.xml: rootfile missing full-path")
+    return full_path.strip().replace("\\", "/")
+
+
+def _parse_opf(opf_xml_bytes: bytes) -> tuple[dict[str, tuple[str, str]], list[str], dict[str, str]]:
+    """
+    Parse package.opf. Return (manifest, spine_ids, metadata).
+    manifest: id -> (href, media_type)
+    spine_ids: ordered list of item idrefs (content documents only, skip nav).
+    metadata: title, language, authors (joined), publisher, identifier.
+    """
+    root = ET.fromstring(opf_xml_bytes)
+    manifest: dict[str, tuple[str, str]] = {}
+    for item in root.findall(".//{%s}item" % OPF_NS):
+        item_id = item.get("id")
+        href = item.get("href")
+        media_type = (item.get("media-type") or "").strip()
+        if item_id and href:
+            manifest[item_id.strip()] = (href.replace("\\", "/"), media_type)
+
+    spine_ids: list[str] = []
+    spine = root.find(".//{%s}spine" % OPF_NS)
+    if spine is not None:
+        for itemref in spine.findall("{%s}itemref" % OPF_NS):
+            idref = (itemref.get("idref") or "").strip()
+            if idref and idref.lower() != "nav":
+                spine_ids.append(idref)
+
+    meta: dict[str, str] = {}
+    # DC elements may have no namespace or dc namespace
+    for tag, key in [
+        ("{%s}title" % DC_NS, "title"),
+        ("{%s}title" % "http://purl.org/dc/elements/1.1/", "title"),
+        ("title", "title"),
+        ("{%s}language" % DC_NS, "language"),
+        ("{%s}language" % "http://purl.org/dc/elements/1.1/", "language"),
+        ("language", "language"),
+        ("{%s}publisher" % DC_NS, "publisher"),
+        ("{%s}publisher" % "http://purl.org/dc/elements/1.1/", "publisher"),
+        ("publisher", "publisher"),
+        ("{%s}identifier" % DC_NS, "identifier"),
+        ("{%s}identifier" % "http://purl.org/dc/elements/1.1/", "identifier"),
+        ("identifier", "identifier"),
+    ]:
+        el = root.find(f".//{tag}")
+        if el is not None and el.text and key not in meta:
+            meta[key] = (el.text or "").strip()
+    authors: list[str] = []
+    for creator in root.findall(".//{%s}creator" % DC_NS):
+        if creator is not None and creator.text and (creator.text or "").strip():
+            authors.append((creator.text or "").strip())
+    if authors:
+        meta["authors"] = "|".join(authors)
+
+    return manifest, spine_ids, meta
+
+
+def _opf_metadata_to_book_metadata(meta: dict[str, str]) -> BookMetadata:
+    """Build BookMetadata from OPF metadata dict (from _parse_opf)."""
+    title = (meta.get("title") or "").strip() or "Untitled"
+    language = (meta.get("language") or "").strip() or DEFAULT_LANGUAGE
+    authors_str = meta.get("authors") or ""
+    authors = [a.strip() for a in authors_str.split("|") if a.strip()] if authors_str else []
+    publisher = (meta.get("publisher") or "").strip() or None
+    ident = (meta.get("identifier") or "").strip()
+    identifiers = {"identifier": ident} if ident else {}
+    return BookMetadata(
+        title=title,
+        language=language,
+        authors=authors if authors else None,
+        publisher=publisher,
+        identifiers=identifiers if identifiers else None,
+    )
+
+
+def _is_xhtml_media_type(media_type: str) -> bool:
+    return "html" in media_type.lower() or "xhtml" in media_type.lower()
+
+
+def _is_image_media_type(media_type: str) -> bool:
+    return media_type.lower().startswith("image/")
+
+
+def _nodes_from_opf(
+    manifest: dict[str, tuple[str, str]],
+    spine_ids: list[str],
+    opf_dir: str,
+    read_file: Any,
+    images_dir: Path | None,
+) -> tuple[list[ContentItem], dict[str, Path]]:
+    """
+    Build ContentItem list and images dict from OPF manifest/spine by reading HTML via read_file(href).
+    read_file(href) returns bytes for path opf_dir/href. images_dir used to write image files.
+    """
+    all_nodes: list[ContentItem] = []
+    images: dict[str, Path] = {}
+    p_global = 0
+    ch_global = 0
+    img_global = 0
+
+    # Map normalized href and basename -> manifest id for images (for resolving img src)
+    image_href_to_id: dict[str, str] = {}
+    for item_id, (href, mt) in manifest.items():
+        if _is_image_media_type(mt):
+            norm = posixpath.normpath(posixpath.join(opf_dir, href))
+            image_href_to_id[norm] = item_id
+            image_href_to_id[posixpath.basename(norm)] = item_id
+
+    if images_dir is not None:
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+    for item_id in spine_ids:
+        entry = manifest.get(item_id)
+        if not entry:
+            continue
+        href, media_type = entry
+        if not _is_xhtml_media_type(media_type):
+            continue
+        full_ref = posixpath.normpath(posixpath.join(opf_dir, href))
+        try:
+            raw = read_file(full_ref)
+        except Exception:
+            continue
+        if not raw:
+            continue
+        doc_base = posixpath.dirname(full_ref)
+        blocks = _html_to_blocks(raw)
+        for blk in blocks:
+            if isinstance(blk[0], int):
+                level, text = blk[0], blk[1]
+                text_clean = text.strip()
+                if not text_clean:
+                    continue
+                if level >= 1:
+                    all_nodes.append(
+                        ContentNode(id=f"ch_{ch_global}", text=text_clean, level=level)
+                    )
+                    ch_global += 1
+                else:
+                    all_nodes.append(
+                        ContentNode(id=f"p_{p_global}", text=text_clean, level=0)
+                    )
+                    p_global += 1
+            elif blk[0] == "img":
+                _, img_href, alt = blk[0], blk[1], blk[2]
+                if not img_href:
+                    continue
+                resolved = posixpath.normpath(
+                    posixpath.join(doc_base, unquote(img_href).replace("\\", "/"))
+                )
+                # Resolve image: by full path or basename
+                image_id_key = image_href_to_id.get(resolved) or image_href_to_id.get(
+                    posixpath.basename(resolved)
+                )
+                if not image_id_key or images_dir is None:
+                    continue
+                img_entry = manifest.get(image_id_key)
+                if not img_entry:
+                    continue
+                img_href_path = posixpath.normpath(posixpath.join(opf_dir, img_entry[0]))
+                try:
+                    content = read_file(img_href_path)
+                except Exception:
+                    continue
+                if not content or not isinstance(content, bytes):
+                    continue
+                ext = _guess_image_ext(content)
+                image_id = f"img_{img_global}"
+                img_global += 1
+                file_path = images_dir / f"{image_id}{ext}"
+                file_path.write_bytes(content)
+                images[image_id] = file_path
+                node_id = f"img_node_{img_global - 1}"
+                all_nodes.append(ImageNode(id=node_id, image_id=image_id, alt=alt))
+    return all_nodes, images
+
+
+def _extract_from_directory(root_dir: Path, images_dir: Path | None) -> Document:
+    """Extract Document from an unzipped EPUB directory (mimetype, META-INF, OPS/...)."""
+
+    container_path = root_dir / "META-INF" / "container.xml"
+    if not container_path.is_file():
+        raise RuntimeError(f"Not an unzipped EPUB: missing {container_path}")
+    container_xml = container_path.read_bytes()
+    opf_rel_path = _parse_container_rootfile(container_xml)
+    opf_path = root_dir / opf_rel_path
+    if not opf_path.is_file():
+        raise RuntimeError(f"OPF not found: {opf_path}")
+    opf_xml = opf_path.read_bytes()
+    manifest, spine_ids, meta = _parse_opf(opf_xml)
+    opf_dir_str = opf_rel_path.replace("\\", "/")
+    if "/" in opf_dir_str:
+        opf_dir_str = posixpath.dirname(opf_dir_str)
+    else:
+        opf_dir_str = ""
+
+    def read_file(href_or_path: str) -> bytes:
+        # href_or_path is path inside root_dir (e.g. OPS/s00000-beta.xhtml)
+        full = root_dir / href_or_path
+        if not full.is_file():
+            raise FileNotFoundError(str(full))
+        return full.read_bytes()
+
+    root_nodes, images = _nodes_from_opf(
+        manifest, spine_ids, opf_dir_str, read_file, images_dir
+    )
+    metadata = _opf_metadata_to_book_metadata(meta)
+    return Document(metadata=metadata, root_nodes=root_nodes, images=images)
+
+
+def _extract_from_zip(zip_path: Path, images_dir: Path | None) -> Document:
+    """Extract Document from EPUB ZIP when ebooklib fails (e.g. mimetype compressed)."""
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        try:
+            container_xml = zf.read("META-INF/container.xml")
+        except KeyError:
+            raise RuntimeError("Invalid EPUB: no META-INF/container.xml in archive") from None
+        opf_rel_path = _parse_container_rootfile(container_xml)
+        try:
+            opf_xml = zf.read(opf_rel_path)
+        except KeyError:
+            raise RuntimeError(f"Invalid EPUB: OPF not in archive: {opf_rel_path}") from None
+        manifest, spine_ids, meta = _parse_opf(opf_xml)
+        opf_dir_str = opf_rel_path.replace("\\", "/")
+        if "/" in opf_dir_str:
+            opf_dir_str = posixpath.dirname(opf_dir_str)
+        else:
+            opf_dir_str = ""
+
+        def read_file(member_path: str) -> bytes:
+            # member_path is path inside zip (e.g. OPS/s00000-beta.xhtml)
+            normalized = member_path.replace("\\", "/")
+            try:
+                return zf.read(normalized)
+            except KeyError:
+                raise FileNotFoundError(normalized) from None
+
+        root_nodes, images = _nodes_from_opf(
+            manifest, spine_ids, opf_dir_str, read_file, images_dir
+        )
+    metadata = _opf_metadata_to_book_metadata(meta)
+    return Document(metadata=metadata, root_nodes=root_nodes, images=images)
+
+
 class EpubExtractor(BaseExtractor):
-    """Extract a Document from an EPUB file using ebooklib and spine-ordered HTML parsing."""
+    """Extract a Document from an EPUB file or unzipped folder. Uses ebooklib first; fallback to ZIP/directory parsing for pdf2epub-style EPUBs."""
 
     def extract(self, path: Path | str, images_dir: Path | str | None = None) -> Document:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"EPUB not found: {path}")
+        idir = Path(images_dir) if images_dir is not None else None
+
+        if path.is_dir():
+            return _extract_from_directory(path, idir)
+
         if epub is None:
             raise RuntimeError("ebooklib is not installed; install with: pip install ebooklib")
         try:
             book = epub.read_epub(str(path))
         except FileNotFoundError:
             raise
-        except Exception as e:
-            raise RuntimeError(f"Failed to read EPUB: {e}") from e
+        except Exception:
+            try:
+                return _extract_from_zip(path, idir)
+            except Exception as e:
+                raise RuntimeError(f"Failed to read EPUB (ebooklib and fallback failed): {e}") from e
         metadata = _epub_metadata_to_book_metadata(book)
-        idir = Path(images_dir) if images_dir is not None else None
         root_nodes, images = _extract_nodes_from_epub(book, idir)
         return Document(metadata=metadata, root_nodes=root_nodes, images=images)

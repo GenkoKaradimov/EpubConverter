@@ -41,6 +41,7 @@ class MainWindow:
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Open PDF...", command=self._on_open_pdf)
         file_menu.add_command(label="Open EPUB...", command=self._on_open_epub)
+        file_menu.add_command(label="Open EPUB folder...", command=self._on_open_epub_folder)
         file_menu.add_command(label="Export EPUB...", command=self._on_export_epub)
         file_menu.add_command(label="Preview EPUB", command=self._on_preview_epub)
         file_menu.add_separator()
@@ -99,6 +100,12 @@ class MainWindow:
             title="Open EPUB",
             filetypes=[("EPUB files", "*.epub"), ("All files", "*.*")],
         )
+        if not path:
+            return
+        self._open_epub_async(path)
+
+    def _on_open_epub_folder(self) -> None:
+        path = filedialog.askdirectory(title="Open EPUB folder (unzipped)")
         if not path:
             return
         self._open_epub_async(path)
