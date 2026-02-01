@@ -163,6 +163,25 @@ class EditorPresenter:
             self._view.show_text_panel()
             self._view.set_text(_item_text(node))
 
+    def _show_node(self, index: int) -> None:
+        """Show text or image panel for node at index."""
+        nodes = self._document.flat_list()
+        if index < 0 or index >= len(nodes):
+            self._view.show_text_panel()
+            self._view.set_text("")
+            return
+        node = nodes[index]
+        if isinstance(node, ImageNode):
+            path = self._document.images.get(node.image_id)
+            if path and path.exists():
+                self._view.show_image_panel(path, node)
+            else:
+                self._view.show_text_panel()
+                self._view.set_text(_item_text(node))
+        else:
+            self._view.show_text_panel()
+            self._view.set_text(_item_text(node))
+
     def on_show(self) -> None:
         """Populate list from document and select first node if any."""
         nodes = self._document.flat_list()

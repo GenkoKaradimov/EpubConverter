@@ -111,6 +111,30 @@ class EditorView(Frame):
         self._photo_ref: object = None  # keep reference so PhotoImage is not gc'd
         self._text_frame.pack(fill=BOTH, expand=True)
 
+        # Image panel (ImageNode): toolbar on top, image fills rest
+        image_frame = Frame(self._right_panel)
+        self._image_frame = image_frame
+        # Toolbar: Rotate, Crop, Alt in one row
+        toolbar = Frame(image_frame)
+        toolbar.pack(side=TOP, fill=X, pady=(0, 4))
+        Label(toolbar, text="Rotate:").pack(side=LEFT, padx=(0, 2))
+        self._rotate_var = StringVar(value="0")
+        self._rotate_spin = Spinbox(toolbar, from_=-360, to=360, width=6, textvariable=self._rotate_var, command=self._on_rotate_change)
+        self._rotate_spin.pack(side=LEFT, padx=(0, 8))
+        self._rotate_spin.bind("<Return>", lambda e: self._on_rotate_change())
+        Button(toolbar, text="Crop...", command=self._on_crop_click).pack(side=LEFT, padx=(0, 8))
+        Label(toolbar, text="Alt:").pack(side=LEFT, padx=(0, 2))
+        self._alt_entry = Entry(toolbar, width=30)
+        self._alt_entry.pack(side=LEFT, fill=X, expand=True, padx=(0, 4))
+        self._alt_entry.bind("<KeyRelease>", self._on_alt_modified)
+        # Image area: fills all space below toolbar
+        self._image_label = Label(image_frame, text="(no image)", relief="sunken", bg="gray90")
+        self._image_label.pack(side=TOP, fill=BOTH, expand=True)
+        # Bind on frame only so resizing the image doesn't trigger a new Configure loop
+        image_frame.bind("<Configure>", self._on_image_panel_configure)
+        self._photo_ref: object = None  # keep reference so PhotoImage is not gc'd
+        self._text_frame.pack(fill=BOTH, expand=True)
+
         # Buttons
         btn_frame = Frame(self)
         btn_frame.pack(fill=X, pady=8)
