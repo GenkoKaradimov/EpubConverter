@@ -386,6 +386,9 @@ class EditorView(Frame):
         add_below_menu.add_command(label="Image...", command=self._on_context_add_below_image)
         add_below_menu.add_command(label="Image from clipboard", command=self._on_context_add_below_image_from_clipboard)
         menu.add_cascade(label="Add below", menu=add_below_menu)
+        menu.add_separator()
+        menu.add_command(label="Separate formulas", command=self._on_context_separate_formulas)
+        menu.add_command(label="Paragraph to image", command=self._on_context_paragraph_to_image)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -422,6 +425,14 @@ class EditorView(Frame):
     def _on_context_add_below_image_from_clipboard(self) -> None:
         if self._presenter:
             self._presenter.on_add_below_image_from_clipboard()
+
+    def _on_context_separate_formulas(self) -> None:
+        if self._presenter:
+            self._presenter.on_separate_formulas()
+
+    def _on_context_paragraph_to_image(self) -> None:
+        if self._presenter:
+            self._presenter.on_paragraph_to_image()
 
     def _on_text_modified(self, event: object) -> None:
         if self._text.cget("state") == "normal":

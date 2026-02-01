@@ -121,6 +121,8 @@ class LatexDialog:
             self._progress_frame.grid()
         self._progress["value"] = 0
         self._progress_label.config(text="0 %")
+        self._did_to_images = do_to_images
+        self._to_images_result: list[tuple[int, int, list[str]] | None] = [None]
 
         n_phases = sum([do_alphabet, do_merge, do_separate, do_to_images])
         phase_size = 100 // n_phases if n_phases else 100
@@ -152,10 +154,9 @@ class LatexDialog:
                 current_phase[0] += 1
                 if do_to_images:
                     from services.latex_to_image import convert_formula_paragraphs_to_images
-                    total = len(doc.root_nodes)
                     def to_img_cb(c: int, t: int) -> None:
                         progress_cb(c, t)
-                    convert_formula_paragraphs_to_images(doc, progress_callback=to_img_cb)
+                    self._to_images_result[0] = convert_formula_paragraphs_to_images(doc, progress_callback=to_img_cb)
             finally:
                 self._root.after(0, self._done)
 
@@ -173,4 +174,8 @@ class LatexDialog:
         self._btn_start.config(state="normal")
         self._btn_close.config(state="normal")
         self._win.protocol("WM_DELETE_WINDOW", self._win.destroy)
+        if getattr(self, "_did_to_images", False) and self._to_images_result[0] is not None:
+            from gui.presenters import show_paragraph_to_image_result
+            converted, failed, errors = self._to_images_result[0]
+            show_paragraph_to_image_result(converted, failed, errors, self._win)
         self._main_window.refresh_editor_view()
