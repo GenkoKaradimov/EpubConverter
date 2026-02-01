@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.application import Application
     from core.models.document import Document
+    from gui.presenters import EditorPresenter
 
 
 class MainWindow:
@@ -24,6 +25,7 @@ class MainWindow:
         self._app = app
         self._container: Frame | None = None
         self._current_view_frame: Frame | None = None
+        self._editor_presenter: EditorPresenter | None = None
 
         self._root.title("EpubConverter")
         self._root.geometry("600x400")
@@ -47,6 +49,10 @@ class MainWindow:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
+        latex_menu = Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="LaTeX", menu=latex_menu)
+        latex_menu.add_command(label="LaTeX...", command=self._on_latex)
+
         help_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self._on_about)
@@ -59,6 +65,12 @@ class MainWindow:
         if self._current_view_frame:
             self._current_view_frame.destroy()
             self._current_view_frame = None
+        self._editor_presenter = None
+
+    def refresh_editor_view(self) -> None:
+        """Refresh editor list and current text from document (e.g. after LaTeX replacement)."""
+        if self._editor_presenter is not None:
+            self._editor_presenter.on_show()
 
     def show_conversion_view(self, initial_path: str | None = None) -> None:
         """Show the conversion view (PDF picker, Extract). Optionally set initial PDF path."""
@@ -85,7 +97,15 @@ class MainWindow:
         view.pack(fill="both", expand=True)
         presenter = EditorPresenter(view, document, self)
         view.set_presenter(presenter)
+        self._editor_presenter = presenter
         presenter.on_show()
+
+    def _on_latex(self) -> None:
+        if not self._app.current_document:
+            messagebox.showinfo("LaTeX", "No document loaded. Open a PDF or EPUB, or extract from PDF.")
+            return
+        from gui.views.latex_dialog import LatexDialog
+        LatexDialog(self._root, self._app, self)
 
     def _on_open_pdf(self) -> None:
         path = filedialog.askopenfilename(
