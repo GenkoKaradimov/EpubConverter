@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from core.converters.epub_builder import EpubBuilder
-from core.models import BookMetadata, ContentNode, Document
+from core.models import BookMetadata, ContentNode, Document, ImageNode
 
 
 def _make_sample_document() -> Document:
@@ -66,6 +66,36 @@ def test_epub_builder_file_opens_and_has_content() -> None:
         assert "Only paragraph here" in text
     finally:
         path.unlink(missing_ok=True)
+
+
+def test_epub_builder_with_image_node() -> None:
+    """Document with ImageNode and image on disk produces EPUB with img tag and image item."""
+    try:
+        import ebooklib
+        from ebooklib import epub
+    except ImportError:
+        pytest.skip("ebooklib not installed")
+
+    meta = BookMetadata(title="Book With Image", language="en")
+    p = ContentNode(id="p_0", text="See below.", level=0)
+    img_node = ImageNode(id="img_node_0", image_id="img_0", alt="A figure")
+    with tempfile.TemporaryDirectory() as tmp:
+        img_path = Path(tmp) / "img_0.png"
+        img_path.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
+        doc = Document(metadata=meta, root_nodes=[p, img_node], images={"img_0": img_path})
+        builder = EpubBuilder()
+        out_path = Path(tmp) / "out.epub"
+        builder.build(doc, out_path)
+        book = epub.read_epub(out_path)
+        full_content = b""
+        for item in book.get_items():
+            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                full_content += item.get_content()
+        text = full_content.decode("utf-8", errors="replace")
+        assert "See below" in text
+        assert "<img" in text or "img_" in text
+        has_image_item = any(item.get_type() == ebooklib.ITEM_IMAGE for item in book.get_items())
+        assert has_image_item
 
 
 def test_epub_builder_raises_when_ebooklib_not_installed() -> None:

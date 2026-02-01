@@ -38,7 +38,7 @@ def test_pdf_extractor_returns_document() -> None:
         assert len(doc.root_nodes) >= 1
         flat = doc.flat_list()
         assert len(flat) >= 1
-        texts = [n.text for n in flat]
+        texts = [n.text for n in flat if hasattr(n, "text")]
         assert any("Chapter" in t or "First" in t for t in texts)
         assert any("body" in t or "text" in t for t in texts)
     finally:
@@ -60,7 +60,7 @@ def test_pdf_extractor_heading_heuristic() -> None:
         extractor = PdfExtractor(heading_ratio=1.2)
         doc = extractor.extract(path)
         flat = doc.flat_list()
-        levels = [n.level for n in flat]
+        levels = [n.level for n in flat if hasattr(n, "level")]
         assert 0 in levels
         # We expect at least one heading (level 1) when font sizes differ
         assert 1 in levels

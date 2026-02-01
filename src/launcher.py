@@ -1,7 +1,7 @@
 """
-Launcher splash: shows before the main app. Displays cow.jpg (from resources or Desktop),
-cross-platform. If dependencies are missing, shows "Installing dependencies..." on the image
-and runs pip, then starts the app. All code and comments in English.
+Launcher splash: shows before the main app. Cross-platform placeholder with title;
+if dependencies are missing, shows "Installing dependencies..." and runs pip, then starts the app.
+All code and comments in English.
 """
 
 from __future__ import annotations
@@ -16,54 +16,11 @@ from typing import Callable
 import tkinter as tk
 from tkinter import font as tkfont
 
-# Optional: Pillow for JPEG splash image
-try:
-    from PIL import Image, ImageTk
-except ImportError:
-    Image = None  # type: ignore[assignment, misc]
-    ImageTk = None  # type: ignore[assignment, misc]
-
 # Splash size (fixed, OS-independent)
 SPLASH_W = 560
 SPLASH_H = 380
 OVERLAY_HEIGHT = 72
 APP_TITLE = "EpubConverter"
-
-
-def _find_cow_image(project_root: Path) -> Path | None:
-    """Look for cow.jpg in project resources then Desktop (cross-platform)."""
-    candidates = [
-        project_root / "resources" / "cow.jpg",
-        Path.home() / "Desktop" / "cow.jpg",
-    ]
-    for p in candidates:
-        if p.is_file():
-            return p
-    return None
-
-
-def _load_photo(project_root: Path) -> tuple[tk.PhotoImage | None, bool]:
-    """Load cow.jpg as Tk PhotoImage if Pillow and file exist; else None. Returns (photo, used_placeholder)."""
-    if Image is None or ImageTk is None:
-        return None, True
-    path = _find_cow_image(project_root)
-    if path is None:
-        return None, True
-    try:
-        img = Image.open(path)
-        img = img.convert("RGB")
-        img.thumbnail((SPLASH_W, SPLASH_H), Image.Resampling.LANCZOS)
-        # Crop or pad to exact size so layout is stable
-        w, h = img.size
-        if w < SPLASH_W or h < SPLASH_H:
-            new_img = Image.new("RGB", (SPLASH_W, SPLASH_H), (30, 30, 40))
-            new_img.paste(img, ((SPLASH_W - w) // 2, (SPLASH_H - h) // 2))
-            img = new_img
-        else:
-            img = img.crop((0, 0, SPLASH_W, SPLASH_H))
-        return ImageTk.PhotoImage(img), False
-    except Exception:
-        return None, True
 
 
 def _check_dependencies() -> bool:
@@ -117,7 +74,7 @@ def _center_on_screen(root: tk.Tk) -> None:
 
 def run_launcher(project_root: Path, on_ready: Callable[[], None]) -> None:
     """
-    Show splash window (cow.jpg or placeholder). If deps missing, show
+    Show splash window (placeholder with title). If deps missing, show
     "Installing dependencies..." and pip install; then call on_ready() (start main app).
     """
     root = tk.Tk()
@@ -133,7 +90,7 @@ def run_launcher(project_root: Path, on_ready: Callable[[], None]) -> None:
     main_frame.pack(fill=tk.BOTH, expand=True)
     main_frame.pack_propagate(False)
 
-    # Image area
+    # Content area: placeholder with title
     canvas = tk.Canvas(
         main_frame,
         width=SPLASH_W,
@@ -142,26 +99,19 @@ def run_launcher(project_root: Path, on_ready: Callable[[], None]) -> None:
         highlightthickness=0,
     )
     canvas.pack(fill=tk.BOTH, expand=True)
+    canvas.create_rectangle(0, 0, SPLASH_W, SPLASH_H, fill="#252532", outline="")
+    try:
+        title_font = tkfont.Font(family="Segoe UI", size=28, weight="bold")
+    except tk.TclError:
+        title_font = tkfont.Font(size=28, weight="bold")
+    try:
+        sub_font = tkfont.Font(family="Segoe UI", size=14)
+    except tk.TclError:
+        sub_font = tkfont.Font(size=14)
+    canvas.create_text(SPLASH_W // 2, SPLASH_H // 2 - 20, text=APP_TITLE, fill="#e8e8f0", font=title_font)
+    canvas.create_text(SPLASH_W // 2, SPLASH_H // 2 + 24, text="PDF → EPUB", fill="#9090a0", font=sub_font)
 
-    photo, used_placeholder = _load_photo(project_root)
-    if photo is not None:
-        canvas.create_image(SPLASH_W // 2, SPLASH_H // 2, image=photo)
-    else:
-        # Placeholder: gradient-like with title
-        canvas.create_rectangle(0, 0, SPLASH_W, SPLASH_H, fill="#252532", outline="")
-        # Cross-platform font: system default sans if specific family missing
-        try:
-            title_font = tkfont.Font(family="Segoe UI", size=28, weight="bold")
-        except tk.TclError:
-            title_font = tkfont.Font(size=28, weight="bold")
-        try:
-            sub_font = tkfont.Font(family="Segoe UI", size=14)
-        except tk.TclError:
-            sub_font = tkfont.Font(size=14)
-        canvas.create_text(SPLASH_W // 2, SPLASH_H // 2 - 20, text=APP_TITLE, fill="#e8e8f0", font=title_font)
-        canvas.create_text(SPLASH_W // 2, SPLASH_H // 2 + 24, text="PDF → EPUB", fill="#9090a0", font=sub_font)
-
-    # Overlay bar for status (on top of image)
+    # Overlay bar for status
     overlay = tk.Frame(main_frame, height=OVERLAY_HEIGHT, bg="#1a1a24")
     overlay.place(x=0, y=SPLASH_H - OVERLAY_HEIGHT, width=SPLASH_W, height=OVERLAY_HEIGHT)
     try:

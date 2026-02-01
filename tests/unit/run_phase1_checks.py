@@ -16,8 +16,9 @@ m2 = BookMetadata(title=" T ", language="en", authors=["A1"], identifiers={"isbn
 assert m2.title == "T" and m2.authors == ["A1"] and "isbn" in m2.identifiers
 print("BookMetadata OK")
 
-# ContentNode, Document
-from core.models.document import ContentNode, Document
+# ContentNode, ImageNode, Document
+from pathlib import Path
+from core.models.document import ContentNode, Document, ImageNode
 
 n1 = ContentNode(id="c1", text="Ch1", level=1)
 n2 = ContentNode(id="p1", text="P1", level=0)
@@ -26,7 +27,12 @@ doc = Document(metadata=m, root_nodes=[n1])
 flat = doc.flat_list()
 assert len(flat) == 2 and flat[0].id == "c1" and flat[1].id == "p1"
 assert doc.get_node_by_id("p1") is n2 and doc.get_node_by_id("x") is None
-print("Document/ContentNode OK")
+
+img_node = ImageNode(id="img_n", image_id="img_0", alt="Fig")
+assert img_node.image_id == "img_0" and img_node.alt == "Fig"
+doc2 = Document(metadata=m, root_nodes=[n1, img_node], images={"img_0": Path("/tmp/x.png")})
+assert len(doc2.images) == 1 and doc2.get_node_by_id("img_n") is img_node
+print("Document/ContentNode/ImageNode OK")
 
 # BaseExtractor, BaseBuilder
 from core.converters.base import BaseBuilder, BaseExtractor

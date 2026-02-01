@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.converters.epub_builder import EpubBuilder
+from core.converters.epub_extractor import EpubExtractor
 from core.converters.pdf_extractor import PdfExtractor
 from core.models.document import Document
 
@@ -36,8 +37,9 @@ def run_pipeline(
     if not pdf_path.exists():
         raise PipelineError(f"PDF not found: {pdf_path}")
 
+    images_dir = epub_path.parent / (epub_path.stem + "_images")
     try:
-        document = PdfExtractor().extract(pdf_path)
+        document = PdfExtractor().extract(pdf_path, images_dir=images_dir)
     except FileNotFoundError as e:
         raise PipelineError(f"PDF not found: {e}") from e
     except RuntimeError as e:
@@ -55,3 +57,22 @@ def run_pipeline(
         raise PipelineError(f"EPUB build failed: {e}") from e
 
     return document, epub_path
+
+
+def run_import_epub(epub_path: Path | str) -> Document:
+    """
+    Import an EPUB file into a Document (no build step). For editing or re-export.
+    Raises PipelineError on failure. Images are written to a directory next to the EPUB.
+    """
+    epub_path = Path(epub_path)
+    if not epub_path.exists():
+        raise PipelineError(f"EPUB not found: {epub_path}")
+    images_dir = epub_path.parent / (epub_path.stem + "_images")
+    try:
+        return EpubExtractor().extract(epub_path, images_dir=images_dir)
+    except FileNotFoundError as e:
+        raise PipelineError(f"EPUB not found: {e}") from e
+    except RuntimeError as e:
+        raise PipelineError(f"EPUB import failed (missing dependency?): {e}") from e
+    except Exception as e:
+        raise PipelineError(f"EPUB import failed: {e}") from e
