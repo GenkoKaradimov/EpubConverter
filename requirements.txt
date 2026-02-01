@@ -11,3 +11,6 @@ Pillow>=10.0.0
 
 # Configuration (optional .env support)
 python-dotenv>=1.0.0
+
+# LaTeX formula rendering (mathtext; no system LaTeX required)
+matplotlib>=3.6

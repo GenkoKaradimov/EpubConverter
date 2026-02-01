@@ -24,6 +24,9 @@ SEPARATE_DESCRIPTION = (
 MERGE_DESCRIPTION = (
     "Merges two, three, four... consecutive paragraphs into one. Paragraphs that are entirely a formula are left separate."
 )
+TO_IMAGES_DESCRIPTION = (
+    "Replaces each paragraph that is entirely LaTeX (e.g. $...$) with a PNG image of the formula. Requires matplotlib."
+)
 
 
 class LatexDialog:
@@ -39,6 +42,7 @@ class LatexDialog:
         self._alphabet_var = BooleanVar(value=True)
         self._separate_var = BooleanVar(value=False)
         self._merge_var = BooleanVar(value=False)
+        self._to_images_var = BooleanVar(value=False)
         self._progress: ttk.Progressbar | None = None
         self._progress_label: Label | None = None
         self._progress_frame: Frame | None = None
@@ -66,7 +70,12 @@ class LatexDialog:
         cb3 = Checkbutton(f, text="Merge", variable=self._merge_var)
         cb3.grid(row=row, column=0, columnspan=2, sticky=W, pady=(0, 2))
         row += 1
-        Label(f, text=MERGE_DESCRIPTION, wraplength=400, justify="left", font=("", 9)).grid(row=row, column=0, columnspan=2, sticky=W, padx=(20, 0), pady=(0, 12))
+        Label(f, text=MERGE_DESCRIPTION, wraplength=400, justify="left", font=("", 9)).grid(row=row, column=0, columnspan=2, sticky=W, padx=(20, 0), pady=(0, 8))
+        row += 1
+        cb4 = Checkbutton(f, text="Convert formula paragraphs to images", variable=self._to_images_var)
+        cb4.grid(row=row, column=0, columnspan=2, sticky=W, pady=(0, 2))
+        row += 1
+        Label(f, text=TO_IMAGES_DESCRIPTION, wraplength=400, justify="left", font=("", 9)).grid(row=row, column=0, columnspan=2, sticky=W, padx=(20, 0), pady=(0, 12))
         row += 1
 
         self._progress_frame = Frame(f)
@@ -89,9 +98,19 @@ class LatexDialog:
         do_alphabet = self._alphabet_var.get()
         do_merge = self._merge_var.get()
         do_separate = self._separate_var.get()
-        if not (do_alphabet or do_merge or do_separate):
+        do_to_images = self._to_images_var.get()
+        if not (do_alphabet or do_merge or do_separate or do_to_images):
             messagebox.showinfo("LaTeX", "Select at least one action.")
             return
+        if do_to_images:
+            from services.latex_to_image import MATHTEXT_AVAILABLE
+            if not MATHTEXT_AVAILABLE:
+                messagebox.showinfo(
+                    "LaTeX",
+                    "Convert formula paragraphs to images requires matplotlib. Install with: pip install matplotlib",
+                    parent=self._win,
+                )
+                do_to_images = False
         doc = self._app.current_document
         if not doc:
             return
@@ -103,7 +122,7 @@ class LatexDialog:
         self._progress["value"] = 0
         self._progress_label.config(text="0 %")
 
-        n_phases = sum([do_alphabet, do_merge, do_separate])
+        n_phases = sum([do_alphabet, do_merge, do_separate, do_to_images])
         phase_size = 100 // n_phases if n_phases else 100
         current_phase = [0]
 
@@ -121,17 +140,22 @@ class LatexDialog:
                 current_phase[0] += 1
                 if do_merge:
                     from services.latex_merge import merge_paragraphs
-                    total = len(doc.root_nodes)
                     def merge_cb(c: int, t: int) -> None:
                         progress_cb(c, t)
                     merge_paragraphs(doc, progress_callback=merge_cb)
                 current_phase[0] += 1
                 if do_separate:
                     from services.latex_merge import separate_formulas
-                    total = len(doc.root_nodes)
                     def sep_cb(c: int, t: int) -> None:
                         progress_cb(c, t)
                     separate_formulas(doc, progress_callback=sep_cb)
+                current_phase[0] += 1
+                if do_to_images:
+                    from services.latex_to_image import convert_formula_paragraphs_to_images
+                    total = len(doc.root_nodes)
+                    def to_img_cb(c: int, t: int) -> None:
+                        progress_cb(c, t)
+                    convert_formula_paragraphs_to_images(doc, progress_callback=to_img_cb)
             finally:
                 self._root.after(0, self._done)
 
