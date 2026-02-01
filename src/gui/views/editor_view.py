@@ -82,6 +82,10 @@ class EditorView(Frame):
         text_scroll_y.config(command=self._text.yview)
         text_scroll_x.config(command=self._text.xview)
         self._text.bind("<<Modified>>", self._on_text_modified)
+        self._text.bind("<Control-c>", self._on_text_copy)
+        self._text.bind("<Control-v>", self._on_text_paste)
+        self._text.bind("<Control-x>", self._on_text_cut)
+        self._text.bind("<Button-3>", self._on_text_right_click)
 
         # Image panel (ImageNode): toolbar on top, image fills rest
         image_frame = Frame(self._right_panel)
@@ -422,6 +426,53 @@ class EditorView(Frame):
     def _on_text_modified(self, event: object) -> None:
         if self._text.cget("state") == "normal":
             self._text_modified = True
+
+    def _on_text_copy(self, event: object = None) -> str | None:
+        """Copy selection from Content text to clipboard."""
+        try:
+            if self._text.tag_ranges("sel"):
+                sel = self._text.get("sel.first", "sel.last")
+                self._text.clipboard_clear()
+                self._text.clipboard_append(sel)
+        except Exception:
+            pass
+        return "break" if event is not None else None
+
+    def _on_text_paste(self, event: object = None) -> str | None:
+        """Paste from clipboard into Content text."""
+        try:
+            text = self._text.clipboard_get()
+            self._text.insert("insert", text)
+            if self._text.cget("state") == "normal":
+                self._text_modified = True
+        except Exception:
+            pass
+        return "break" if event is not None else None
+
+    def _on_text_cut(self, event: object = None) -> str | None:
+        """Cut selection from Content text to clipboard."""
+        try:
+            if self._text.tag_ranges("sel"):
+                sel = self._text.get("sel.first", "sel.last")
+                self._text.clipboard_clear()
+                self._text.clipboard_append(sel)
+                self._text.delete("sel.first", "sel.last")
+                if self._text.cget("state") == "normal":
+                    self._text_modified = True
+        except Exception:
+            pass
+        return "break" if event is not None else None
+
+    def _on_text_right_click(self, event: object) -> None:
+        """Show context menu (Copy, Paste, Cut) for Content text."""
+        menu = Menu(self._text, tearoff=0)
+        menu.add_command(label="Copy", command=lambda: self._on_text_copy(None))
+        menu.add_command(label="Paste", command=lambda: self._on_text_paste(None))
+        menu.add_command(label="Cut", command=lambda: self._on_text_cut(None))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def _on_add_chapter(self) -> None:
         if self._presenter:

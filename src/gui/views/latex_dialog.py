@@ -1,12 +1,13 @@
 """
-LaTeX dialog: actions (Alphabet), description, Start/Close. On Start: block dialog, progress bar, worker thread; on done: unblock and refresh editor.
+LaTeX dialog: checkboxes (Alphabet, Separate formulas, Merge), descriptions, Start/Close.
+On Start: block dialog, progress bar, worker thread; run in order Alphabet -> Merge -> Separate; on done: unblock and refresh editor.
 """
 
 from __future__ import annotations
 
 import threading
-from tkinter import Tk, Toplevel, Frame, Label, Button, Radiobutton, StringVar, W, E
-from tkinter import ttk
+from tkinter import Tk, Toplevel, Frame, Label, Button, Checkbutton, BooleanVar, W, E
+from tkinter import ttk, messagebox
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,10 +18,16 @@ ALPHABET_DESCRIPTION = (
     "Replaces single LaTeX symbols like $\\beta$ with Unicode characters (e.g. β) "
     "in all paragraphs and headings. Greek alphabet and common math symbols. Does not modify full formulas."
 )
+SEPARATE_DESCRIPTION = (
+    "Splits paragraphs that contain LaTeX formulas into several paragraphs so that each formula is alone in one paragraph. Order is preserved."
+)
+MERGE_DESCRIPTION = (
+    "Merges two, three, four... consecutive paragraphs into one. Paragraphs that are entirely a formula are left separate."
+)
 
 
 class LatexDialog:
-    """Toplevel dialog: LaTeX actions (Alphabet), description, progress bar, Start and Close buttons."""
+    """Toplevel dialog: LaTeX checkboxes (Alphabet, Separate formulas, Merge), descriptions, progress bar, Start and Close buttons."""
 
     def __init__(self, root: Tk, app: "Application", main_window: "MainWindow") -> None:
         self._root = root
@@ -29,7 +36,9 @@ class LatexDialog:
         self._win = Toplevel(root)
         self._win.title("LaTeX")
         self._win.transient(root)
-        self._action_var = StringVar(value="alphabet")
+        self._alphabet_var = BooleanVar(value=True)
+        self._separate_var = BooleanVar(value=False)
+        self._merge_var = BooleanVar(value=False)
         self._progress: ttk.Progressbar | None = None
         self._progress_label: Label | None = None
         self._progress_frame: Frame | None = None
@@ -41,31 +50,47 @@ class LatexDialog:
         f = Frame(self._win, padx=12, pady=12)
         f.pack(fill="both", expand=True)
 
-        Label(f, text="Action:", font=("", 10, "bold")).grid(row=0, column=0, sticky=W, pady=(0, 4))
-        rb = Radiobutton(f, text="Alphabet", variable=self._action_var, value="alphabet")
-        rb.grid(row=1, column=0, columnspan=2, sticky=W, pady=(0, 8))
-
-        Label(f, text="Description:", font=("", 10, "bold")).grid(row=2, column=0, sticky=W, pady=(0, 4))
-        desc = Label(f, text=ALPHABET_DESCRIPTION, wraplength=400, justify="left")
-        desc.grid(row=3, column=0, columnspan=2, sticky=W, pady=(0, 12))
+        row = 0
+        Label(f, text="Actions:", font=("", 10, "bold")).grid(row=row, column=0, sticky=W, pady=(0, 4))
+        row += 1
+        cb1 = Checkbutton(f, text="Alphabet", variable=self._alphabet_var)
+        cb1.grid(row=row, column=0, columnspan=2, sticky=W, pady=(0, 2))
+        row += 1
+        Label(f, text=ALPHABET_DESCRIPTION, wraplength=400, justify="left", font=("", 9)).grid(row=row, column=0, columnspan=2, sticky=W, padx=(20, 0), pady=(0, 8))
+        row += 1
+        cb2 = Checkbutton(f, text="Separate formulas", variable=self._separate_var)
+        cb2.grid(row=row, column=0, columnspan=2, sticky=W, pady=(0, 2))
+        row += 1
+        Label(f, text=SEPARATE_DESCRIPTION, wraplength=400, justify="left", font=("", 9)).grid(row=row, column=0, columnspan=2, sticky=W, padx=(20, 0), pady=(0, 8))
+        row += 1
+        cb3 = Checkbutton(f, text="Merge", variable=self._merge_var)
+        cb3.grid(row=row, column=0, columnspan=2, sticky=W, pady=(0, 2))
+        row += 1
+        Label(f, text=MERGE_DESCRIPTION, wraplength=400, justify="left", font=("", 9)).grid(row=row, column=0, columnspan=2, sticky=W, padx=(20, 0), pady=(0, 12))
+        row += 1
 
         self._progress_frame = Frame(f)
-        self._progress_frame.grid(row=4, column=0, columnspan=2, sticky=W + E, pady=(0, 8))
+        self._progress_frame.grid(row=row, column=0, columnspan=2, sticky=W + E, pady=(0, 8))
         self._progress = ttk.Progressbar(self._progress_frame, maximum=100, value=0, mode="determinate")
         self._progress.pack(fill="x", expand=True)
         self._progress_label = Label(self._progress_frame, text="")
         self._progress_label.pack(anchor=W)
         self._progress_frame.grid_remove()
+        row += 1
 
         btn_frame = Frame(f)
-        btn_frame.grid(row=5, column=0, columnspan=2, pady=(8, 0))
+        btn_frame.grid(row=row, column=0, columnspan=2, pady=(8, 0))
         self._btn_start = Button(btn_frame, text="Start", command=self._on_start)
         self._btn_start.pack(side="left", padx=(0, 8))
         self._btn_close = Button(btn_frame, text="Close", command=self._win.destroy)
         self._btn_close.pack(side="left")
 
     def _on_start(self) -> None:
-        if self._action_var.get() != "alphabet":
+        do_alphabet = self._alphabet_var.get()
+        do_merge = self._merge_var.get()
+        do_separate = self._separate_var.get()
+        if not (do_alphabet or do_merge or do_separate):
+            messagebox.showinfo("LaTeX", "Select at least one action.")
             return
         doc = self._app.current_document
         if not doc:
@@ -77,21 +102,38 @@ class LatexDialog:
             self._progress_frame.grid()
         self._progress["value"] = 0
         self._progress_label.config(text="0 %")
-        total = len(doc.flat_list())
-        if total == 0:
-            self._progress["value"] = 100
-            self._progress_label.config(text="100 %")
-            self._done()
-            return
+
+        n_phases = sum([do_alphabet, do_merge, do_separate])
+        phase_size = 100 // n_phases if n_phases else 100
+        current_phase = [0]
 
         def progress_cb(current: int, tot: int) -> None:
             pct = int(100 * current / tot) if tot else 0
-            self._root.after(0, lambda: self._update_progress(pct))
+            base = current_phase[0] * phase_size
+            total_pct = min(100, base + (pct * phase_size // 100) if tot else base + phase_size)
+            self._root.after(0, lambda: self._update_progress(total_pct))
 
         def run() -> None:
-            from services.latex_replace import replace_latex_alphabet
-            replace_latex_alphabet(doc, progress_callback=progress_cb)
-            self._root.after(0, self._done)
+            try:
+                if do_alphabet:
+                    from services.latex_replace import replace_latex_alphabet
+                    replace_latex_alphabet(doc, progress_callback=progress_cb)
+                current_phase[0] += 1
+                if do_merge:
+                    from services.latex_merge import merge_paragraphs
+                    total = len(doc.root_nodes)
+                    def merge_cb(c: int, t: int) -> None:
+                        progress_cb(c, t)
+                    merge_paragraphs(doc, progress_callback=merge_cb)
+                current_phase[0] += 1
+                if do_separate:
+                    from services.latex_merge import separate_formulas
+                    total = len(doc.root_nodes)
+                    def sep_cb(c: int, t: int) -> None:
+                        progress_cb(c, t)
+                    separate_formulas(doc, progress_callback=sep_cb)
+            finally:
+                self._root.after(0, self._done)
 
         threading.Thread(target=run, daemon=True).start()
 
