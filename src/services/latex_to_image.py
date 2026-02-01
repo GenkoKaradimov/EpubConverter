@@ -25,13 +25,15 @@ except ImportError:
 def _normalize_formula_for_mathtext(formula_text: str) -> str:
     """
     Replace LaTeX aliases that mathtext does not recognize with their canonical form.
-    E.g. \\ge -> \\geq, \\le -> \\leq; \\rm -> \\mathrm (mathtext supports \\mathrm but not \\rm).
+    E.g. \\ge -> \\geq, \\le -> \\leq; \\rm -> \\mathrm; strip \\tag{...} (mathtext does not support \\tag).
     """
     text = re.sub(r"\\ge(?!q)", r"\\geq", formula_text)
     text = re.sub(r"\\le(?!q)", r"\\leq", text)
     # \rm is a font switch; mathtext expects \mathrm{...}. \rm n -> \mathrm{n}, \rm{np} -> \mathrm{np}
     text = re.sub(r"\\rm\s*\{([^}]*)\}", r"\\mathrm{\1}", text)
     text = re.sub(r"\\rm\s*(\w)", r"\\mathrm{\1}", text)
+    # mathtext does not support \tag{...}; remove equation numbers
+    text = re.sub(r"\\tag\{[^}]*\}", "", text)
     return text
 
 
@@ -123,7 +125,7 @@ def convert_formula_paragraphs_to_images(
             if len(alt) > 80:
                 alt = alt[:77] + "..."
             new_list.append(
-                ImageNode(id=f"img_node_{image_id}", image_id=image_id, alt=alt or None)
+                ImageNode(id=f"img_node_{image_id}", image_id=image_id, alt=alt or None, is_formula=True)
             )
             converted += 1
         else:
@@ -190,7 +192,7 @@ def convert_single_paragraph_to_image(
         if len(alt) > 80:
             alt = alt[:77] + "..."
         root[root_index] = ImageNode(
-            id=f"img_node_{image_id}", image_id=image_id, alt=alt or None
+            id=f"img_node_{image_id}", image_id=image_id, alt=alt or None, is_formula=True
         )
         return 1, 0, []
     formula = node.text.strip()

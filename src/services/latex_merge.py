@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Callable
 if TYPE_CHECKING:
     from core.models.document import Document
 
-# Paragraph is "entirely formula" if after strip it is only $...$ and optional whitespace.
-_RE_ENTIRELY_FORMULA = re.compile(r"^\s*(\$[^$]*\$\s*)+$")
+# Paragraph is "entirely formula" if after strip it is only $$...$$ or $...$ segments and optional whitespace.
+_RE_ENTIRELY_FORMULA = re.compile(r"^\s*((\$\$[^$]*\$\$|\$[^$]*\$)\s*)+$")
 
 # Split text into segments: non-formula and formula. Match display math $$...$$ first, then inline $...$.
 # Order matters: $$...$$ before $...$ so we don't split "$$ formula $$" into three parts.
@@ -20,7 +20,7 @@ _RE_FORMULA = re.compile(r"(\$\$[^$]*\$\$|\$[^$]*\$)")
 
 
 def _is_entirely_formula(text: str) -> bool:
-    """True if text (after strip) is empty or only LaTeX formulas ($...$) and whitespace."""
+    """True if text (after strip) is only LaTeX formulas ($$...$$ or $...$) and whitespace."""
     if not text or not text.strip():
         return False
     return _RE_ENTIRELY_FORMULA.match(text.strip()) is not None

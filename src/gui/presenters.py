@@ -290,6 +290,7 @@ class EditorPresenter:
                 alt=node.alt,
                 rotation_degrees=node.rotation_degrees,
                 crop_rect=node.crop_rect,
+                is_formula=node.is_formula,
             )
         nodes.insert(idx + 1, clone)
         self._view.set_nodes(self._document.flat_list())
