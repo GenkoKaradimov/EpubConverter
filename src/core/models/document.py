@@ -18,10 +18,11 @@ class ImageNode:
     """
     Single image node in the document: id, image_id (key into Document.images), optional alt.
     Optional rotation_degrees and crop_rect for edit; applied at EPUB build time.
+    is_formula: True if image was generated from a LaTeX formula (used for EPUB CSS sizing).
     Images are stored on disk; Document.images maps image_id -> Path.
     """
 
-    __slots__ = ("_id", "_image_id", "_alt", "_rotation_degrees", "_crop_rect")
+    __slots__ = ("_id", "_image_id", "_alt", "_rotation_degrees", "_crop_rect", "_is_formula")
 
     def __init__(
         self,
@@ -30,6 +31,7 @@ class ImageNode:
         alt: str | None = None,
         rotation_degrees: float = 0.0,
         crop_rect: tuple[float, float, float, float] | None = None,
+        is_formula: bool = False,
     ) -> None:
         if not isinstance(id, str) or not id.strip():
             raise ValueError("id must be a non-empty str")
@@ -40,6 +42,7 @@ class ImageNode:
         self._alt = alt.strip() if isinstance(alt, str) and alt.strip() else None
         self._rotation_degrees = float(rotation_degrees)
         self._crop_rect = self._validate_crop_rect(crop_rect)
+        self._is_formula = bool(is_formula)
 
     @staticmethod
     def _validate_crop_rect(
@@ -90,6 +93,14 @@ class ImageNode:
     @crop_rect.setter
     def crop_rect(self, value: tuple[float, float, float, float] | None) -> None:
         self._crop_rect = self._validate_crop_rect(value)
+
+    @property
+    def is_formula(self) -> bool:
+        return self._is_formula
+
+    @is_formula.setter
+    def is_formula(self, value: bool) -> None:
+        self._is_formula = bool(value)
 
     def walk(self) -> Iterator[ImageNode]:
         """Yield only this node (no children)."""

@@ -86,7 +86,8 @@ def _nodes_to_xhtml_body(
             if not href:
                 continue
             alt_attr = f' alt="{_escape(node.alt or "")}"' if node.alt else ""
-            parts.append(f'<figure><img src="{_escape(href)}"{alt_attr} /></figure>')
+            fig_class = ' class="formula-image"' if getattr(node, "is_formula", False) else ""
+            parts.append(f'<figure{fig_class}><img src="{_escape(href)}"{alt_attr} /></figure>')
     return "\n".join(parts) if parts else "<p></p>"
 
 
@@ -120,7 +121,13 @@ def _build_epub(document: Document, path: Path) -> None:
         uid="style_main",
         file_name="style/main.css",
         media_type="text/css",
-        content="body { font-family: serif; }\np { margin: 1em 0; }\nh1, h2, h3 { margin: 1em 0 0.5em; }\nfigure { margin: 1em 0; }\n".encode("utf-8"),
+        content=(
+            "body { font-family: serif; }\n"
+            "p { margin: 1em 0; }\n"
+            "h1, h2, h3 { margin: 1em 0 0.5em; }\n"
+            "figure { margin: 1em 0; }\n"
+            "figure.formula-image img { max-height: 1.3em; max-width: 100%; height: auto; width: auto; }\n"
+        ).encode("utf-8"),
     )
     book.add_item(nav_css)
 

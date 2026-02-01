@@ -5,9 +5,11 @@ All code and comments in English.
 
 from __future__ import annotations
 
+import re
 import tempfile
 import threading
 from pathlib import Path
+from tkinter import Button, Frame, Label, Toplevel
 from tkinter import filedialog, messagebox
 from typing import TYPE_CHECKING
 
@@ -66,6 +68,68 @@ def _item_text(item: ContentItem) -> str:
     return item.text
 
 
+def show_paragraph_to_image_result(
+    converted: int,
+    failed: int,
+    errors: list[str],
+    parent: object,
+) -> None:
+    """
+    Show summary message and, if errors, a Toplevel with one Copy button per error.
+    parent: a Tk widget or MainWindow (has _root) for messagebox parent and Toplevel parent.
+    """
+    root = getattr(parent, "_root", None)
+    if root is None and hasattr(parent, "winfo_toplevel"):
+        root = parent.winfo_toplevel()
+    if root is None:
+        root = parent
+    if failed == 0 and converted == 0:
+        messagebox.showinfo(
+            "Paragraph to image",
+            "No formula paragraphs found to convert.",
+            parent=root,
+        )
+    elif failed == 0:
+        messagebox.showinfo(
+            "Paragraph to image",
+            f"Success. {converted} paragraph(s) converted to images.",
+            parent=root,
+        )
+    else:
+        messagebox.showinfo(
+            "Paragraph to image",
+            f"Done. {converted} converted, {failed} failed.",
+            parent=root,
+        )
+    if errors:
+        win = Toplevel(root)
+        win.title("Errors")
+        win.transient(root)
+        f = Frame(win, padx=12, pady=12)
+        f.pack(fill="both", expand=True)
+        Label(f, text="Errors (Copy = one error, Copy all = entire list):", font=("", 10, "bold")).pack(anchor="w")
+        canvas_frame = Frame(f)
+        canvas_frame.pack(fill="both", expand=True)
+        for i, err_text in enumerate(errors):
+            row = Frame(canvas_frame)
+            row.pack(fill="x", pady=2)
+            lbl = Label(row, text=err_text, wraplength=500, justify="left", font=("", 9))
+            lbl.pack(side="left", fill="x", expand=True)
+            def make_copy_cb(text: str) -> object:
+                def cb() -> None:
+                    root.clipboard_clear()
+                    root.clipboard_append(text)
+                return cb
+            Button(row, text="Copy", command=make_copy_cb(err_text)).pack(side="right", padx=(8, 0))
+        btn_frame = Frame(f)
+        btn_frame.pack(pady=(12, 0))
+        def copy_all_cb() -> None:
+            root.clipboard_clear()
+            root.clipboard_append("\n\n---\n\n".join(errors))
+        Button(btn_frame, text="Copy all", command=copy_all_cb).pack(side="left", padx=(0, 8))
+        Button(btn_frame, text="Close", command=win.destroy).pack(side="left")
+
+
 class EditorPresenter:
     """
     Editor presenter: wire view and Document. Read on show, write on Apply or selection change.
@@ -77,6 +141,27 @@ class EditorPresenter:
         self._document = document
         self._main_window = main_window
         self._current_index: int | None = None
+        self._find_node_index: int | None = None
+        self._find_from_pos: str | int | None = None
+
+    def _show_node(self, index: int) -> None:
+        """Show text or image panel for node at index."""
+        nodes = self._document.flat_list()
+        if index < 0 or index >= len(nodes):
+            self._view.show_text_panel()
+            self._view.set_text("")
+            return
+        node = nodes[index]
+        if isinstance(node, ImageNode):
+            path = self._document.images.get(node.image_id)
+            if path and path.exists():
+                self._view.show_image_panel(path, node)
+            else:
+                self._view.show_text_panel()
+                self._view.set_text(_item_text(node))
+        else:
+            self._view.show_text_panel()
+            self._view.set_text(_item_text(node))
 
     def _show_node(self, index: int) -> None:
         """Show text or image panel for node at index."""
@@ -227,6 +312,7 @@ class EditorPresenter:
                 alt=node.alt,
                 rotation_degrees=node.rotation_degrees,
                 crop_rect=node.crop_rect,
+                is_formula=node.is_formula,
             )
         nodes.insert(idx + 1, clone)
         self._view.set_nodes(self._document.flat_list())
@@ -337,6 +423,53 @@ class EditorPresenter:
         self._show_node(idx + 1)
         self._view.set_buttons_state(True)
 
+    def on_separate_formulas(self) -> None:
+        """Run separate_formulas on the document and refresh the list."""
+        from services.latex_merge import separate_formulas
+
+        separate_formulas(self._document)
+        idx = self._view.get_selected_index()
+        self._view.set_nodes(self._document.flat_list())
+        if idx is not None and idx >= len(self._document.flat_list()):
+            idx = max(0, len(self._document.flat_list()) - 1)
+        if idx is not None:
+            self._view.set_selection(idx)
+            self._current_index = idx
+            self._show_node(idx)
+        self._main_window.refresh_editor_view()
+
+    def on_paragraph_to_image(self) -> None:
+        """Convert only the selected paragraph to image (if it is entirely a LaTeX formula)."""
+        from services.latex_to_image import MATHTEXT_AVAILABLE, convert_single_paragraph_to_image
+
+        root = getattr(self._main_window, "_root", None)
+        if not root:
+            return
+        idx = self._view.get_selected_index()
+        if idx is None:
+            messagebox.showinfo(
+                "Paragraph to image",
+                "Select an item first.",
+                parent=root,
+            )
+            return
+        if not MATHTEXT_AVAILABLE:
+            messagebox.showinfo(
+                "Paragraph to image",
+                "matplotlib is required. Install with: pip install matplotlib",
+                parent=root,
+            )
+            return
+        converted, failed, errors = convert_single_paragraph_to_image(self._document, idx)
+        show_paragraph_to_image_result(converted, failed, errors, self._main_window)
+        self._view.set_nodes(self._document.flat_list())
+        if idx >= len(self._document.flat_list()):
+            idx = max(0, len(self._document.flat_list()) - 1)
+        self._view.set_selection(idx)
+        self._current_index = idx
+        self._show_node(idx)
+        self._main_window.refresh_editor_view()
+
     def on_rotate(self, degrees: float) -> None:
         """Set rotation on current ImageNode and refresh preview."""
         if self._current_index is None:
@@ -374,9 +507,122 @@ class EditorPresenter:
                 open_dialog(node.crop_rect)
 
     def on_find_next(self) -> None:
-        """Find next occurrence of search string in text area."""
+        """Find next occurrence of search string in text area (legacy; used by inline Find)."""
         query = self._view.get_search_query()
-        self._view.find_in_text(query)
+        if query:
+            self._view.find_in_text(query, "1.0", False)[0]
+
+    def find_next(
+        self, find_text: str, match_case: bool = False, wrap: bool = True
+    ) -> bool:
+        """
+        Find next occurrence of find_text across all document nodes.
+        Highlights and shows the match. Returns True if found.
+        """
+        nodes = self._document.flat_list()
+        if not nodes or not find_text:
+            return False
+        start_node = self._find_node_index if self._find_node_index is not None else self._current_index
+        if start_node is None:
+            start_node = 0
+        from_pos = self._find_from_pos
+        for attempt in range(len(nodes) + 1):
+            if attempt == 0:
+                idx = start_node
+            else:
+                idx = (start_node + attempt) % len(nodes)
+                if not wrap and start_node + attempt >= len(nodes):
+                    return False
+            self._view.set_selection(idx)
+            self._show_node(idx)
+            self._current_index = idx
+            if attempt == 0 and from_pos is not None:
+                pos: str | int = from_pos
+            else:
+                pos = "1.0" if self._view.is_showing_text_panel() else 0
+            if self._view.is_showing_text_panel():
+                found, start, end = self._view.find_in_text(find_text, pos if isinstance(pos, str) else "1.0", match_case)
+            else:
+                from_char = pos if isinstance(pos, int) else 0
+                found, start, end = self._view.find_in_alt(find_text, match_case, from_char=from_char)
+            if found:
+                self._find_node_index = idx
+                self._find_from_pos = end
+                return True
+        return False
+
+    def replace_current(
+        self, find_text: str, replace_text: str, match_case: bool = False
+    ) -> bool:
+        """
+        Replace current selection if it matches find_text. Returns True if replaced.
+        """
+        if self._current_index is None:
+            return False
+        sel = self._view.get_selected_text()
+        if not sel:
+            return False
+        if match_case:
+            if sel != find_text:
+                return False
+        else:
+            if sel.lower() != find_text.lower():
+                return False
+        new_text = self._view.replace_selection(replace_text)
+        nodes = self._document.flat_list()
+        if 0 <= self._current_index < len(nodes):
+            node = nodes[self._current_index]
+            if isinstance(node, ImageNode):
+                node.alt = new_text or None
+            else:
+                node.text = new_text
+        self._view.clear_text_modified()
+        self._find_from_pos = self._view.get_insert_position()
+        return True
+
+    def replace_all(
+        self, find_text: str, replace_text: str, match_case: bool = False
+    ) -> int:
+        """
+        Replace all occurrences of find_text with replace_text in all document nodes.
+        Returns the number of replacements.
+        """
+        if not find_text:
+            return 0
+        total = 0
+        nodes = self._document.flat_list()
+        for node in nodes:
+            if isinstance(node, ImageNode):
+                text = node.alt or ""
+                if match_case:
+                    count = text.count(find_text)
+                    if count:
+                        node.alt = text.replace(find_text, replace_text) or None
+                        total += count
+                else:
+                    pattern = re.escape(find_text)
+                    new_text, count = re.subn(pattern, replace_text, text, flags=re.IGNORECASE)
+                    if count:
+                        node.alt = new_text or None
+                        total += count
+            else:
+                text = node.text
+                if match_case:
+                    count = text.count(find_text)
+                    if count:
+                        node.text = text.replace(find_text, replace_text)
+                        total += count
+                else:
+                    pattern = re.escape(find_text)
+                    new_text, count = re.subn(pattern, replace_text, text, flags=re.IGNORECASE)
+                    if count:
+                        node.text = new_text
+                        total += count
+        self._find_node_index = None
+        self._find_from_pos = None
+        if self._current_index is not None and nodes:
+            self._show_node(self._current_index)
+        return total
 
 
 class ConversionPresenter:

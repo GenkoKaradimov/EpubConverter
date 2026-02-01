@@ -82,6 +82,34 @@ class EditorView(Frame):
         text_scroll_y.config(command=self._text.yview)
         text_scroll_x.config(command=self._text.xview)
         self._text.bind("<<Modified>>", self._on_text_modified)
+        self._text.bind("<Control-c>", self._on_text_copy)
+        self._text.bind("<Control-v>", self._on_text_paste)
+        self._text.bind("<Control-x>", self._on_text_cut)
+        self._text.bind("<Button-3>", self._on_text_right_click)
+
+        # Image panel (ImageNode): toolbar on top, image fills rest
+        image_frame = Frame(self._right_panel)
+        self._image_frame = image_frame
+        # Toolbar: Rotate, Crop, Alt in one row
+        toolbar = Frame(image_frame)
+        toolbar.pack(side=TOP, fill=X, pady=(0, 4))
+        Label(toolbar, text="Rotate:").pack(side=LEFT, padx=(0, 2))
+        self._rotate_var = StringVar(value="0")
+        self._rotate_spin = Spinbox(toolbar, from_=-360, to=360, width=6, textvariable=self._rotate_var, command=self._on_rotate_change)
+        self._rotate_spin.pack(side=LEFT, padx=(0, 8))
+        self._rotate_spin.bind("<Return>", lambda e: self._on_rotate_change())
+        Button(toolbar, text="Crop...", command=self._on_crop_click).pack(side=LEFT, padx=(0, 8))
+        Label(toolbar, text="Alt:").pack(side=LEFT, padx=(0, 2))
+        self._alt_entry = Entry(toolbar, width=30)
+        self._alt_entry.pack(side=LEFT, fill=X, expand=True, padx=(0, 4))
+        self._alt_entry.bind("<KeyRelease>", self._on_alt_modified)
+        # Image area: fills all space below toolbar
+        self._image_label = Label(image_frame, text="(no image)", relief="sunken", bg="gray90")
+        self._image_label.pack(side=TOP, fill=BOTH, expand=True)
+        # Bind on frame only so resizing the image doesn't trigger a new Configure loop
+        image_frame.bind("<Configure>", self._on_image_panel_configure)
+        self._photo_ref: object = None  # keep reference so PhotoImage is not gc'd
+        self._text_frame.pack(fill=BOTH, expand=True)
 
         # Image panel (ImageNode): toolbar on top, image fills rest
         image_frame = Frame(self._right_panel)
@@ -123,15 +151,7 @@ class EditorView(Frame):
         self._btn_export = Button(btn_frame, text="Export to EPUB", command=self._on_export_epub)
         self._btn_export.pack(side=LEFT, padx=(0, 4))
 
-        # Search (optional)
-        search_frame = Frame(self)
-        search_frame.pack(fill=X, pady=(0, 4))
-        Label(search_frame, text="Find:").pack(side=LEFT, padx=(0, 4))
         self._search_var = StringVar()
-        self._search_entry = Entry(search_frame, textvariable=self._search_var, width=30)
-        self._search_entry.pack(side=LEFT, padx=(0, 4))
-        Button(search_frame, text="Find next", command=self._on_find_next).pack(side=LEFT)
-
         self.set_buttons_state(False)
         self._text_modified = False
         self._showing_image = False
@@ -382,6 +402,9 @@ class EditorView(Frame):
         add_below_menu.add_command(label="Image...", command=self._on_context_add_below_image)
         add_below_menu.add_command(label="Image from clipboard", command=self._on_context_add_below_image_from_clipboard)
         menu.add_cascade(label="Add below", menu=add_below_menu)
+        menu.add_separator()
+        menu.add_command(label="Separate formulas", command=self._on_context_separate_formulas)
+        menu.add_command(label="Paragraph to image", command=self._on_context_paragraph_to_image)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -419,9 +442,64 @@ class EditorView(Frame):
         if self._presenter:
             self._presenter.on_add_below_image_from_clipboard()
 
+    def _on_context_separate_formulas(self) -> None:
+        if self._presenter:
+            self._presenter.on_separate_formulas()
+
+    def _on_context_paragraph_to_image(self) -> None:
+        if self._presenter:
+            self._presenter.on_paragraph_to_image()
+
     def _on_text_modified(self, event: object) -> None:
         if self._text.cget("state") == "normal":
             self._text_modified = True
+
+    def _on_text_copy(self, event: object = None) -> str | None:
+        """Copy selection from Content text to clipboard."""
+        try:
+            if self._text.tag_ranges("sel"):
+                sel = self._text.get("sel.first", "sel.last")
+                self._text.clipboard_clear()
+                self._text.clipboard_append(sel)
+        except Exception:
+            pass
+        return "break" if event is not None else None
+
+    def _on_text_paste(self, event: object = None) -> str | None:
+        """Paste from clipboard into Content text."""
+        try:
+            text = self._text.clipboard_get()
+            self._text.insert("insert", text)
+            if self._text.cget("state") == "normal":
+                self._text_modified = True
+        except Exception:
+            pass
+        return "break" if event is not None else None
+
+    def _on_text_cut(self, event: object = None) -> str | None:
+        """Cut selection from Content text to clipboard."""
+        try:
+            if self._text.tag_ranges("sel"):
+                sel = self._text.get("sel.first", "sel.last")
+                self._text.clipboard_clear()
+                self._text.clipboard_append(sel)
+                self._text.delete("sel.first", "sel.last")
+                if self._text.cget("state") == "normal":
+                    self._text_modified = True
+        except Exception:
+            pass
+        return "break" if event is not None else None
+
+    def _on_text_right_click(self, event: object) -> None:
+        """Show context menu (Copy, Paste, Cut) for Content text."""
+        menu = Menu(self._text, tearoff=0)
+        menu.add_command(label="Copy", command=lambda: self._on_text_copy(None))
+        menu.add_command(label="Paste", command=lambda: self._on_text_paste(None))
+        menu.add_command(label="Cut", command=lambda: self._on_text_cut(None))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def _on_add_chapter(self) -> None:
         if self._presenter:
@@ -446,10 +524,6 @@ class EditorView(Frame):
     def _on_export_epub(self) -> None:
         if self._presenter:
             self._presenter.on_export_epub()
-
-    def _on_find_next(self) -> None:
-        if self._presenter:
-            self._presenter.on_find_next()
 
     def set_presenter(self, presenter: "EditorPresenter") -> None:
         self._presenter = presenter
@@ -495,19 +569,95 @@ class EditorView(Frame):
     def focus_text(self) -> None:
         self._text.focus_set()
 
-    def find_in_text(self, search: str) -> bool:
-        """Find next occurrence of search in text; select it. Returns True if found."""
+    def find_in_text(
+        self, search: str, from_pos: str = "1.0", match_case: bool = False
+    ) -> tuple[bool, str, str]:
+        """
+        Find next occurrence of search in text panel from from_pos; select it.
+        Returns (found, start_index, end_index). start/end are Tk Text indices like "1.0", "1.5".
+        """
         if not search:
-            return False
-        start = self._text.search(search, "1.0", END, nocase=True)
+            return False, "", ""
+        start = self._text.search(search, from_pos, END, nocase=not match_case)
         if not start:
-            return False
+            return False, "", ""
         end = f"{start}+{len(search)}c"
         self._text.tag_remove("sel", "1.0", END)
         self._text.tag_add("sel", start, end)
         self._text.see(start)
         self._text.mark_set("insert", end)
-        return True
+        return True, start, end
+
+    def find_in_alt(
+        self, search: str, match_case: bool = False, from_char: int = 0
+    ) -> tuple[bool, int, int]:
+        """
+        Find next occurrence of search in alt entry (image panel) from from_char.
+        Returns (found, start_index, end_index) as character offsets; selects the range.
+        """
+        if not search:
+            return False, 0, 0
+        content = self._alt_entry.get()
+        if from_char >= len(content):
+            return False, 0, 0
+        haystack = content[from_char:] if from_char else content
+        needle = search if match_case else search.lower()
+        h = haystack if match_case else haystack.lower()
+        pos = h.find(needle)
+        if pos < 0:
+            return False, 0, 0
+        start = from_char + pos
+        end = start + len(search)
+        self._alt_entry.select_range(start, end)
+        self._alt_entry.icursor(end)
+        return True, start, end
+
+    def is_showing_text_panel(self) -> bool:
+        """True if content area shows text (ContentNode), False if image (ImageNode)."""
+        return not self._showing_image
+
+    def replace_selection(self, replace_text: str) -> str:
+        """
+        Replace current selection in content area with replace_text.
+        Returns the new full text of the current content (after replacement).
+        """
+        if self._showing_image:
+            if self._alt_entry.selection_present():
+                start = self._alt_entry.index("sel.first")
+                end = self._alt_entry.index("sel.last")
+                current = self._alt_entry.get()
+                new_text = current[:start] + replace_text + current[end:]
+                self._alt_entry.delete(0, END)
+                self._alt_entry.insert(0, new_text)
+                self._alt_entry.icursor(start + len(replace_text))
+                return new_text
+            return self._alt_entry.get()
+        if self._text.tag_ranges("sel"):
+            start_idx = self._text.index("sel.first")
+            end_idx = self._text.index("sel.last")
+            self._text.delete(start_idx, end_idx)
+            self._text.insert(start_idx, replace_text)
+            self._text.mark_set("insert", start_idx + " + %dc" % len(replace_text))
+            return self._text.get("1.0", END).rstrip("\n")
+        return self.get_text()
+
+    def get_selected_text(self) -> str:
+        """Return the current selection in the content area, or empty string."""
+        if self._showing_image:
+            if self._alt_entry.selection_present():
+                return self._alt_entry.get()[
+                    self._alt_entry.index("sel.first") : self._alt_entry.index("sel.last")
+                ]
+            return ""
+        if self._text.tag_ranges("sel"):
+            return self._text.get("sel.first", "sel.last")
+        return ""
+
+    def get_insert_position(self) -> str | int:
+        """Return current insert/cursor position for Find Next continuation. Text: index string; Entry: char offset."""
+        if self._showing_image:
+            return self._alt_entry.index("insert")
+        return self._text.index("insert")
 
     def get_search_query(self) -> str:
         return self._search_var.get().strip()
