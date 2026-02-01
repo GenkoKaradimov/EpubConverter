@@ -34,6 +34,7 @@ class MainWindow:
         self._build_menus()
         self._build_container()
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._root.bind("<Control-f>", lambda e: self._on_find_replace())
 
     def _build_menus(self) -> None:
         menubar = Menu(self._root)
@@ -48,6 +49,10 @@ class MainWindow:
         file_menu.add_command(label="Preview EPUB", command=self._on_preview_epub)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
+
+        edit_menu = Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(label="Find and Replace...", command=self._on_find_replace)
 
         latex_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="LaTeX", menu=latex_menu)
@@ -99,6 +104,13 @@ class MainWindow:
         view.set_presenter(presenter)
         self._editor_presenter = presenter
         presenter.on_show()
+
+    def _on_find_replace(self) -> None:
+        if self._editor_presenter is None:
+            messagebox.showinfo("Find and Replace", "Open a document first.")
+            return
+        from gui.views.find_replace_dialog import FindReplaceDialog
+        FindReplaceDialog(self._root, self._editor_presenter)
 
     def _on_latex(self) -> None:
         if not self._app.current_document:

@@ -5,6 +5,7 @@ All code and comments in English.
 
 from __future__ import annotations
 
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -140,6 +141,8 @@ class EditorPresenter:
         self._document = document
         self._main_window = main_window
         self._current_index: int | None = None
+        self._find_node_index: int | None = None
+        self._find_from_pos: str | int | None = None
 
     def _show_node(self, index: int) -> None:
         """Show text or image panel for node at index."""
@@ -485,9 +488,122 @@ class EditorPresenter:
                 open_dialog(node.crop_rect)
 
     def on_find_next(self) -> None:
-        """Find next occurrence of search string in text area."""
+        """Find next occurrence of search string in text area (legacy; used by inline Find)."""
         query = self._view.get_search_query()
-        self._view.find_in_text(query)
+        if query:
+            self._view.find_in_text(query, "1.0", False)[0]
+
+    def find_next(
+        self, find_text: str, match_case: bool = False, wrap: bool = True
+    ) -> bool:
+        """
+        Find next occurrence of find_text across all document nodes.
+        Highlights and shows the match. Returns True if found.
+        """
+        nodes = self._document.flat_list()
+        if not nodes or not find_text:
+            return False
+        start_node = self._find_node_index if self._find_node_index is not None else self._current_index
+        if start_node is None:
+            start_node = 0
+        from_pos = self._find_from_pos
+        for attempt in range(len(nodes) + 1):
+            if attempt == 0:
+                idx = start_node
+            else:
+                idx = (start_node + attempt) % len(nodes)
+                if not wrap and start_node + attempt >= len(nodes):
+                    return False
+            self._view.set_selection(idx)
+            self._show_node(idx)
+            self._current_index = idx
+            if attempt == 0 and from_pos is not None:
+                pos: str | int = from_pos
+            else:
+                pos = "1.0" if self._view.is_showing_text_panel() else 0
+            if self._view.is_showing_text_panel():
+                found, start, end = self._view.find_in_text(find_text, pos if isinstance(pos, str) else "1.0", match_case)
+            else:
+                from_char = pos if isinstance(pos, int) else 0
+                found, start, end = self._view.find_in_alt(find_text, match_case, from_char=from_char)
+            if found:
+                self._find_node_index = idx
+                self._find_from_pos = end
+                return True
+        return False
+
+    def replace_current(
+        self, find_text: str, replace_text: str, match_case: bool = False
+    ) -> bool:
+        """
+        Replace current selection if it matches find_text. Returns True if replaced.
+        """
+        if self._current_index is None:
+            return False
+        sel = self._view.get_selected_text()
+        if not sel:
+            return False
+        if match_case:
+            if sel != find_text:
+                return False
+        else:
+            if sel.lower() != find_text.lower():
+                return False
+        new_text = self._view.replace_selection(replace_text)
+        nodes = self._document.flat_list()
+        if 0 <= self._current_index < len(nodes):
+            node = nodes[self._current_index]
+            if isinstance(node, ImageNode):
+                node.alt = new_text or None
+            else:
+                node.text = new_text
+        self._view.clear_text_modified()
+        self._find_from_pos = self._view.get_insert_position()
+        return True
+
+    def replace_all(
+        self, find_text: str, replace_text: str, match_case: bool = False
+    ) -> int:
+        """
+        Replace all occurrences of find_text with replace_text in all document nodes.
+        Returns the number of replacements.
+        """
+        if not find_text:
+            return 0
+        total = 0
+        nodes = self._document.flat_list()
+        for node in nodes:
+            if isinstance(node, ImageNode):
+                text = node.alt or ""
+                if match_case:
+                    count = text.count(find_text)
+                    if count:
+                        node.alt = text.replace(find_text, replace_text) or None
+                        total += count
+                else:
+                    pattern = re.escape(find_text)
+                    new_text, count = re.subn(pattern, replace_text, text, flags=re.IGNORECASE)
+                    if count:
+                        node.alt = new_text or None
+                        total += count
+            else:
+                text = node.text
+                if match_case:
+                    count = text.count(find_text)
+                    if count:
+                        node.text = text.replace(find_text, replace_text)
+                        total += count
+                else:
+                    pattern = re.escape(find_text)
+                    new_text, count = re.subn(pattern, replace_text, text, flags=re.IGNORECASE)
+                    if count:
+                        node.text = new_text
+                        total += count
+        self._find_node_index = None
+        self._find_from_pos = None
+        if self._current_index is not None and nodes:
+            self._show_node(self._current_index)
+        return total
 
 
 class ConversionPresenter:
